@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - dev
   pull_request:
     branches:
       - main
@@ -40,12 +41,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.load_platforms.outputs.matrix) }}
-    uses: ./.github/workflows/unit_tests_common.yml
+    uses: ./.github/workflows/unit_tests_platform_common.yml
     with:
       platform: ${{ matrix.platform }}
-      display_name: ${{ matrix.display_name }}
-      runs_on: ${{ matrix.runs_on }}
-      image: ${{ matrix.image }}
-      container_options: ${{ matrix.container_options }}
-      set_env: ${{ matrix.set_env }}
-      suites: ${{ matrix.unit_test_suites }}
