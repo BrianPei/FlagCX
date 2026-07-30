@@ -62,12 +62,14 @@ build_suite() {
 
 run_device_api() {
   local suite_dir="$PROJECT_ROOT/test/unittest/device_api"
+  declare -p FLAGCX_CI_MPI_ENV_ARGS >/dev/null 2>&1 || FLAGCX_CI_MPI_ENV_ARGS=()
   local -a common_env=(
     -x FLAGCX_USE_HETERO_COMM=1
     -x FLAGCX_MEM_ENABLE=1
     -x FLAGCX_VMM_ENABLE=0
     -x FLAGCX_P2P_DISABLE=1
     -x LD_LIBRARY_PATH
+    "${FLAGCX_CI_MPI_ENV_ARGS[@]}"
   )
   local -a flags=(-b 1M -e 4M -f 2 -R 2)
 

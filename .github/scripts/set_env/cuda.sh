@@ -25,6 +25,7 @@ FLAGCX_CI_TEST_MAKE_ARGS=(USE_NVIDIA=1)
 FLAGCX_CI_INTRA_NP=8
 FLAGCX_CI_NODE_NP=4
 FLAGCX_CI_RUNNER_NP=8
+FLAGCX_CI_MPI_ENV_ARGS=()
 export NP=8
 
 # Two logical four-GPU nodes on the eight-GPU CUDA runner.
@@ -48,6 +49,8 @@ flagcx_ci_configure_suite() {
     device_api)
       FLAGCX_CI_PROJECT_MAKE_ARGS+=(COMPILE_KERNEL=1 FORCE_DEFAULT_PATH=1)
       FLAGCX_CI_TEST_MAKE_ARGS+=(FORCE_DEFAULT_PATH=1)
+      export FLAGCX_SKIP_PUT_VALUE=1
+      FLAGCX_CI_MPI_ENV_ARGS+=(-x FLAGCX_SKIP_PUT_VALUE)
       ;;
   esac
 }

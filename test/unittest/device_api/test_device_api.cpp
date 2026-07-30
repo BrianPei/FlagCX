@@ -29,6 +29,7 @@
 #include "tools.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
@@ -117,6 +118,10 @@ int main(int argc, char *argv[]) {
   int numWarmupIters = args.getWarmupIters();
   int localRegister = args.getLocalRegister();
   uint64_t splitMask = args.getSplitMask();
+  const bool skipPutValue = [] {
+    const char *value = std::getenv("FLAGCX_SKIP_PUT_VALUE");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+  }();
 
   if (stepFactor <= 1) {
     printf("Error: stepFactor must be > 1, got %d\n", stepFactor);
@@ -276,16 +281,23 @@ int main(int argc, char *argv[]) {
     MPI_Barrier(MPI_COMM_WORLD);
 
     // --- K3: PutValue ---
-    FLAGCXCHECK(devHandle->deviceMemset((char *)recvBuff + putValBase, 0,
-                                        (size_t)totalProcs * sizeof(uint64_t),
-                                        flagcxMemDevice, NULL));
-    FLAGCXCHECK(flagcxInterTestPutValue(recvMem, devComm, stream, putValBase));
-    FLAGCXCHECK(devHandle->streamSynchronize(stream));
-    FLAGCXCHECK(devHandle->deviceMemcpy(
-        (char *)hostBuff + putValBase, (char *)recvBuff + putValBase,
-        (size_t)totalProcs * sizeof(uint64_t), flagcxMemcpyDeviceToHost, NULL));
-    bool k3Ok = verifyPutValue(hostBuff, putValBase, totalProcs, proc);
-    printResult("K3 PutValue", k3Ok, proc);
+    if (skipPutValue) {
+      if (proc == 0 && color == 0)
+        printf("  %-30s SKIPPED\n", "K3 PutValue");
+    } else {
+      FLAGCXCHECK(devHandle->deviceMemset(
+          (char *)recvBuff + putValBase, 0,
+          (size_t)totalProcs * sizeof(uint64_t), flagcxMemDevice, NULL));
+      FLAGCXCHECK(
+          flagcxInterTestPutValue(recvMem, devComm, stream, putValBase));
+      FLAGCXCHECK(devHandle->streamSynchronize(stream));
+      FLAGCXCHECK(devHandle->deviceMemcpy(
+          (char *)hostBuff + putValBase, (char *)recvBuff + putValBase,
+          (size_t)totalProcs * sizeof(uint64_t), flagcxMemcpyDeviceToHost,
+          NULL));
+      bool k3Ok = verifyPutValue(hostBuff, putValBase, totalProcs, proc);
+      printResult("K3 PutValue", k3Ok, proc);
+    }
     MPI_Barrier(MPI_COMM_WORLD);
 
     // --- K4: Get ---
