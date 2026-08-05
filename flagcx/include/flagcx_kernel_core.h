@@ -32,21 +32,30 @@ typedef enum {
   flagcxDevicePrimWait = 3,
   flagcxDevicePrimPut = 4,
   flagcxDevicePrimSignal = 5,
-  flagcxDevicePrimBarrierSignal = 6,
-  flagcxDevicePrimWaitSignal = 7,
+  flagcxDevicePrimBarrierSignal =
+      6, // Legacy: no-op in proxy (barriers now use PrimSignal)
+  flagcxDevicePrimWaitSignal =
+      7, // Legacy: no-op in proxy (GPU polls signal buffer directly)
   flagcxDevicePrimPutValue = 8,
   flagcxDevicePrimPutSignal = 9,
   flagcxDevicePrimGet = 10
 } flagcxDevicePrim;
 
 // Unified buffer index enumeration for fifo
-// Layout: [capacity][consumed][produced][terminate][data...]
-// Note: flagcxFifoIdxTerminate is only used by flagcxReduceTrigger fifo
+// Layout: [capacity][consumed][produced][terminate|completed][data...]
+//
+// Slot 3 is shared between two FIFO types with mutually exclusive semantics:
+//   - flagcxReduceTrigger FIFO: uses slot 3 as "terminate" (host signals GPU to
+//     stop). GPU reads, host writes.
+//   - flagcxDeviceTrigger FIFO: uses slot 3 as "completed" (proxy reports how
+//     many IB ops have finished). GPU reads, single proxy thread writes.
+// A given FIFO instance is one type or the other — never both.
 typedef enum {
   flagcxFifoIdxCapacity = 0,
   flagcxFifoIdxConsumed = 1,
   flagcxFifoIdxProduced = 2,
-  flagcxFifoIdxTerminate = 3,
+  flagcxFifoIdxTerminate = 3, // ReduceTrigger FIFO only
+  flagcxFifoIdxCompleted = 3, // DeviceTrigger FIFO only (IB completion count)
   flagcxFifoIdxData = 4
 } flagcxFifoIndex;
 

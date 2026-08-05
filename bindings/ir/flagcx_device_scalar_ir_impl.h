@@ -74,6 +74,41 @@ flagcxMakeTeamFromKind(const flagcxDevComm &comm, flagcxTeamKind_t kind) {
 }
 
 /* ================================================================
+ * Internal helper: grid-wide barrier (sense-reversing)
+ *
+ * Synchronizes all blocks on the same GPU. Uses a monotonic
+ * sense-flip protocol so it's safely reusable across iterations.
+ * gridSyncState[0] = arrive counter, gridSyncState[1] = sense.
+ * ================================================================ */
+
+static FLAGCX_DEVICE_INLINE_DECORATOR void
+flagcxGridSync(unsigned int *gridSyncState) {
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    unsigned int curSense = *(volatile unsigned int *)&gridSyncState[1];
+    unsigned int arrived = atomicAdd(&gridSyncState[0], 1u) + 1;
+    if (arrived == gridDim.x) {
+      // Last block: reset counter, flip sense to release others
+      atomicExch(&gridSyncState[0], 0u);
+      __threadfence();
+      atomicExch(&gridSyncState[1], 1u - curSense);
+    } else {
+      // Spin until sense flips (all blocks arrived)
+#ifndef NDEBUG
+      unsigned int __spins = 0;
+#endif
+      while (*(volatile unsigned int *)&gridSyncState[1] == curSense) {
+#ifndef NDEBUG
+        if (++__spins >= 100000000u)
+          __trap(); // grid barrier timeout — likely a hang
+#endif
+      }
+    }
+  }
+  __syncthreads();
+}
+
+/* ================================================================
  * Category 2: Scalar Cooperative Group (6)
  * ================================================================ */
 
@@ -231,6 +266,9 @@ flagcxIntraBarrierSyncS(const void *commOpaque, flagcxCoopKind_t coopKind,
   flagcxDevBarrier<flagcxTeamTagIntra, flagcxCoopAny> bar(coop, *comm, team,
                                                           index, multimem);
   bar.sync(order);
+  if (comm->_gridBarrierState) {
+    flagcxGridSync(comm->_gridBarrierState);
+  }
 }
 
 /* ================================================================
@@ -274,6 +312,9 @@ flagcxInterBarrierSyncS(const void *netOpaque, flagcxCoopKind_t coopKind,
   flagcxDevBarrier<flagcxTeamTagInter, flagcxCoopAny> bar(coop, *net, team,
                                                           index);
   bar.sync(order, fence);
+  if (net->_gridBarrierState) {
+    flagcxGridSync(net->_gridBarrierState);
+  }
 }
 
 /* ================================================================
@@ -317,6 +358,9 @@ flagcxWorldBarrierSyncS(const void *netOpaque, flagcxCoopKind_t coopKind,
   flagcxDevBarrier<flagcxTeamTagWorld, flagcxCoopAny> bar(
       coop, flagcxTeamTagWorld{}, *net, index, multimem);
   bar.sync(order, fence);
+  if (net->_gridBarrierState) {
+    flagcxGridSync(net->_gridBarrierState);
+  }
 }
 
 /* ================================================================

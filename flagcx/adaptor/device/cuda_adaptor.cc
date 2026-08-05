@@ -104,6 +104,9 @@ flagcxResult_t cudaAdaptorGetVendor(char *vendor) {
 }
 
 flagcxResult_t cudaAdaptorHostGetDevicePointer(void **pDevice, void *pHost) {
+  if (pDevice == NULL || pHost == NULL) {
+    return flagcxInvalidArgument;
+  }
   DEVCHECK(cudaHostGetDevicePointer(pDevice, pHost, 0));
   return flagcxSuccess;
 }
@@ -549,11 +552,17 @@ cudaAdaptorMemGetHandleForAddressRange(void *handleOut, void *buffer,
 }
 
 flagcxResult_t cudaAdaptorHostRegister(void *ptr, size_t size) {
+  if (ptr == NULL || size == 0) {
+    return flagcxInvalidArgument;
+  }
   DEVCHECK(cudaHostRegister(ptr, size, cudaHostRegisterMapped));
   return flagcxSuccess;
 }
 
 flagcxResult_t cudaAdaptorHostUnregister(void *ptr) {
+  if (ptr == NULL) {
+    return flagcxInvalidArgument;
+  }
   DEVCHECK(cudaHostUnregister(ptr));
   return flagcxSuccess;
 }

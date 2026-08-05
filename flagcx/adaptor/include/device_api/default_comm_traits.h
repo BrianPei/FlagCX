@@ -3,7 +3,7 @@
  *
  * Default Device Traits — Common IPC-based implementation.
  *
- * CommTraits<Default<PlatformTag>> provides:
+ * CommTraits<DefaultBackend<PlatformTag>> provides:
  *   - Intrin, Atomic: inherited from PlatformTraits<PlatformTag> via using
  *   - Window:   IPC peer pointers + raw pointer
  *   - Comm:  rank/size + IPC barriers + signal buffers
@@ -18,12 +18,13 @@
 #define FLAGCX_FALLBACK_DEVICE_TRAITS_H_
 
 #include "flagcx_kernel_core.h"
+#include <cassert>
 #ifndef __CUDACC__
 #include "sym_heap.h"
 #endif
 
 template <typename PlatformTag>
-struct CommTraits<Default<PlatformTag>> {
+struct CommTraits<DefaultBackend<PlatformTag>> {
   // Platform capabilities (resolved via PlatformTag)
   using Intrin = typename PlatformTraits<PlatformTag>::Intrin;
   using Atomic = typename PlatformTraits<PlatformTag>::Atomic;
@@ -151,9 +152,12 @@ struct CommTraits<Default<PlatformTag>> {
     int nBarriers;
 
     // Inter-node signal relay
-    uint64_t *interSignalFlags;
     int nInterPeers;
-    bool isInterLeader;
+
+    // NCCL GIN-style barrier
+    int teamRank;          // this rank's position in inter-node team
+    int nTeamRanks;        // total nodes in team
+    int barrierSignalBase; // first signal slot for barriers
 
     // One-sided fallback
     uint64_t *signalBuffer;
@@ -193,9 +197,10 @@ struct CommTraits<Default<PlatformTag>> {
       dc.barrierPeers = di.barrierPeers;
       dc.epochBuffer = di.epochBuffer;
       dc.nBarriers = di.nBarriers;
-      dc.interSignalFlags = di.interSignalFlags;
       dc.nInterPeers = di.nInterPeers;
-      dc.isInterLeader = di.isInterLeader;
+      dc.teamRank = di.teamRank;
+      dc.nTeamRanks = di.nTeamRanks;
+      dc.barrierSignalBase = di.barrierSignalBase;
       dc.signalBuffer = di.signalBuffer;
       dc.shadowBuffer = di.shadowBuffer;
       dc.counterBuffer = di.counterBuffer;
@@ -229,7 +234,7 @@ struct CommTraits<Default<PlatformTag>> {
   // ---- Barrier alias: delegates to standalone Barrier<Backend, Tag>
   // ----
   template <typename Tag, typename Coop>
-  using Barrier = ::Barrier<Default<PlatformTag>, Tag, Coop>;
+  using Barrier = ::Barrier<DefaultBackend<PlatformTag>, Tag, Coop>;
 
   // ============================================================
   // Static FIFO helpers (used by Net and InterBarrierSession)
@@ -287,24 +292,26 @@ struct CommTraits<Default<PlatformTag>> {
     return flagcxSuccess;
   }
 
-  // Flush: snapshot produced, then spin until consumed >= snapshot.
+  // Flush: snapshot produced, then spin until completed >= snapshot.
+  // The CPU proxy advances 'completed' after IB test() confirms each op done.
+  // This replaces the old PrimWait+streamSynchronize approach that caused
+  // deadlocks.
   FLAGCX_DEVICE_INLINE_DECORATOR
   static flagcxResult_t fifoFlush(void *fifoBuffer) {
     uint64_t *buffer = (uint64_t *)fifoBuffer;
     uint64_t snapshot = Atomic::load(&buffer[flagcxFifoIdxProduced],
                                      flagcxDeviceMemoryOrderAcquire);
     int iter = 0;
-    while (Atomic::load(&buffer[flagcxFifoIdxConsumed],
+    while (Atomic::load(&buffer[flagcxFifoIdxCompleted],
                         flagcxDeviceMemoryOrderAcquire) < snapshot) {
       Intrin::spinBackoff(iter++);
     }
     return flagcxSuccess;
   }
 
-  // Wait: enqueue PrimWait + flush.
+  // Wait: just flush (no PrimWait enqueue needed with completion-based flush).
   FLAGCX_DEVICE_INLINE_DECORATOR
   static flagcxResult_t fifoWait(void *fifoBuffer) {
-    fifoEnqueue(fifoBuffer, 0, 0, buildTrd(flagcxDevicePrimWait, 0, 0));
     return fifoFlush(fifoBuffer);
   }
 
@@ -320,6 +327,9 @@ struct CommTraits<Default<PlatformTag>> {
     int signalCount;
     int counterCount;
     int contextId;
+    int teamRank;
+    int nTeamRanks;
+    int barrierSignalBase;
 
     FLAGCX_DEVICE_INLINE_DECORATOR
     Net(const Comm &dc, int contextIndex)
@@ -332,11 +342,19 @@ struct CommTraits<Default<PlatformTag>> {
           counterCount(dc.counterCount) {
       int cnt = (dc.contextCount > 0) ? dc.contextCount : 1;
       contextId = contextIndex % cnt;
+      teamRank = dc.teamRank;
+      nTeamRanks = dc.nTeamRanks;
+      barrierSignalBase = dc.barrierSignalBase;
     }
 
     FLAGCX_DEVICE_INLINE_DECORATOR bool isIntraPeer(int peer) const {
       int intraBase = _dc.rank - _dc.intraRank;
       return peer >= intraBase && peer < intraBase + _dc.intraSize;
+    }
+
+    FLAGCX_DEVICE_INLINE_DECORATOR bool isValid() const {
+      return signalBuffer != nullptr && counterBuffer != nullptr &&
+             fifoBuffer != nullptr;
     }
 
     // ---- Two-sided FIFO encoders ----
@@ -776,21 +794,21 @@ struct CommTraits<Default<PlatformTag>> {
 };
 
 // ============================================================
-// Barrier specializations for Default<P>
+// Barrier specializations for DefaultBackend<P>
 //
 // Standalone partial specializations (C++ forbids explicit specialization
 // of member templates inside a partial class specialization).
 // ============================================================
 
-// ---- Barrier<Default<P>, flagcxTeamTagIntra, Coop> ----
+// ---- Barrier<DefaultBackend<P>, flagcxTeamTagIntra, Coop> ----
 // Thread-striped per-peer inbox barrier using IPC-mapped atomics.
 template <typename P, typename Coop>
-struct Barrier<Default<P>, flagcxTeamTagIntra, Coop> {
+struct Barrier<DefaultBackend<P>, flagcxTeamTagIntra, Coop> {
   using Atomic = typename PlatformTraits<P>::Atomic;
   using Intrin = typename PlatformTraits<P>::Intrin;
-  using Comm = typename CommTraits<Default<P>>::Comm;
-  using Team = typename CommTraits<Default<P>>::Team;
-  using Multimem = typename CommTraits<Default<P>>::Multimem;
+  using Comm = typename CommTraits<DefaultBackend<P>>::Comm;
+  using Team = typename CommTraits<DefaultBackend<P>>::Team;
+  using Multimem = typename CommTraits<DefaultBackend<P>>::Multimem;
 
   Coop _coop;
   uint64_t **_peerBuffers;
@@ -814,7 +832,9 @@ struct Barrier<Default<P>, flagcxTeamTagIntra, Coop> {
         _myRank(team.rank), _nBarriers(dc.nBarriers), _ctaIndex(index),
         _epochBuffer(dc.epochBuffer),
         _epoch(Atomic::load(&dc.epochBuffer[index],
-                            flagcxDeviceMemoryOrderRelaxed)) {}
+                            flagcxDeviceMemoryOrderAcquire)) {
+    assert(index < FLAGCX_DEVICE_CTA_COUNT);
+  }
 
   // arrive: thread-striped store epoch+1 to each peer's inbox slot for me
   FLAGCX_DEVICE_INLINE_DECORATOR void
@@ -858,98 +878,131 @@ struct Barrier<Default<P>, flagcxTeamTagIntra, Coop> {
   }
 };
 
-// ---- Barrier<Default<P>, flagcxTeamTagInter, Coop> ----
-// Inter-node barrier via FIFO BarrierSignal + host-mapped interSignalFlags.
-// Only the inter leader actually sends/waits; non-leaders are no-ops.
+// ---- Barrier<DefaultBackend<P>, flagcxTeamTagInter, Coop> ----
+// NCCL GIN-style: all ranks participate, interleaved signal+wait per peer.
+// No leader gating. GPU polls device memory signal buffer directly.
+// Barrier signals use regular PrimSignal FIFO entries (async, non-blocking
+// proxy).
 template <typename P, typename Coop>
-struct Barrier<Default<P>, flagcxTeamTagInter, Coop> {
+struct Barrier<DefaultBackend<P>, flagcxTeamTagInter, Coop> {
   using Atomic = typename PlatformTraits<P>::Atomic;
   using Intrin = typename PlatformTraits<P>::Intrin;
-  using Comm = typename CommTraits<Default<P>>::Comm;
-  using Team = typename CommTraits<Default<P>>::Team;
-  using Net = typename CommTraits<Default<P>>::Net;
+  using Comm = typename CommTraits<DefaultBackend<P>>::Comm;
+  using Team = typename CommTraits<DefaultBackend<P>>::Team;
+  using Net = typename CommTraits<DefaultBackend<P>>::Net;
 
   Coop _coop;
-  uint64_t *_interSignals;
   void *_fifoBuffer;
-  int _nInterPeers;
-  bool _isLeader;
-  uint32_t _ctaIndex;
-  uint64_t *_epochBuffer;
-  uint64_t _epoch;
+  uint64_t *_signalBuffer;
+  uint64_t *_shadowBuffer;
+  int _signalCount;
+  int _contextId;
+  int _teamRank;
+  int _nTeamRanks;
+  int _barrierSignal0; // base signal slot for this barrier instance
+  int _stride;         // intraSize — used to compute target global rank
+  int _localRank;      // intra-node rank (for rank-to-rank peer mapping)
 
   // Default ctor (no-op)
   FLAGCX_DEVICE_INLINE_DECORATOR
   Barrier()
-      : _coop(), _interSignals(nullptr), _fifoBuffer(nullptr), _nInterPeers(0),
-        _isLeader(false), _ctaIndex(0), _epochBuffer(nullptr), _epoch(0) {}
+      : _coop(), _fifoBuffer(nullptr), _signalBuffer(nullptr),
+        _shadowBuffer(nullptr), _signalCount(0), _contextId(0), _teamRank(0),
+        _nTeamRanks(0), _barrierSignal0(0), _stride(0), _localRank(0) {}
 
   // Active ctor
   FLAGCX_DEVICE_INLINE_DECORATOR
   Barrier(Coop coop, const Net &net, const Comm &dc, Team, uint32_t index,
           int nInterPeers)
-      : _coop(coop), _interSignals(dc.interSignalFlags),
-        _fifoBuffer(net.fifoBuffer), _nInterPeers(nInterPeers),
-        _isLeader(dc.isInterLeader), _ctaIndex(index),
-        _epochBuffer(&dc.epochBuffer[FLAGCX_DEVICE_CTA_COUNT + index]),
-        _epoch(Atomic::load(&dc.epochBuffer[FLAGCX_DEVICE_CTA_COUNT + index],
-                            flagcxDeviceMemoryOrderRelaxed)) {}
+      : _coop(coop), _fifoBuffer(net.fifoBuffer),
+        _signalBuffer(net.signalBuffer), _shadowBuffer(net.shadowBuffer),
+        _signalCount(net.signalCount), _contextId(net.contextId),
+        _teamRank(net.teamRank), _nTeamRanks(net.nTeamRanks),
+        _barrierSignal0(net.barrierSignalBase + (int)index * net.nTeamRanks),
+        _stride(dc.intraSize), _localRank(dc.intraRank) {
+    assert(index < FLAGCX_DEVICE_CTA_COUNT);
+  }
 
-  // arrive: FIFO BarrierSignal (leader only)
+  // arrive: signal all remote peers "I have arrived"
   FLAGCX_DEVICE_INLINE_DECORATOR void
   arrive(flagcxDeviceMemoryOrder_t order = flagcxDeviceMemoryOrderAcqRel,
          flagcxDevNetFenceLevel fence = flagcxDevNetFenceLevel::Relaxed) {
-    _epoch += _nInterPeers;
-    if (_coop.threadRank() == 0) {
-      Atomic::store(_epochBuffer, _epoch, flagcxDeviceMemoryOrderRelease);
+    if (_nTeamRanks <= 1)
+      return;
+    int nPeers = _nTeamRanks - 1;
+    FLAGCX_DEVICE_SYNC_THREADS();
+    // Each thread handles a subset of peers (cooperative distribution)
+    for (int i = FLAGCX_THREAD_IDX_X; i < nPeers; i += FLAGCX_BLOCK_DIM_X) {
+      int peerIdx = (1 + _teamRank + i) % _nTeamRanks;
+      int targetRank = peerIdx * _stride + _localRank;
+      // Signal remote peer: enqueue PrimSignal to FIFO
+      // signalIdx = barrierSignal0 + myTeamRank (where peer expects my signal)
+      int signalIdx = _barrierSignal0 + _teamRank;
+      int combinedIdx = _contextId * _signalCount + signalIdx;
+      uint64_t trdSpecific =
+          ((uint64_t)0 << flagcxDeviceTriggerOffBufferType) |
+          ((uint64_t)combinedIdx << flagcxDeviceTriggerOffSignalIdxSig) |
+          ((uint64_t)1 << flagcxDeviceTriggerOffSignalValue);
+      CommTraits<DefaultBackend<P>>::fifoEnqueue(
+          _fifoBuffer, 0, 0,
+          CommTraits<DefaultBackend<P>>::buildTrd(flagcxDevicePrimSignal,
+                                                  targetRank, trdSpecific));
     }
-    _coop.sync();
-    if (_coop.threadRank() == 0 && _isLeader) {
-      CommTraits<Default<P>>::fifoEnqueue(
-          _fifoBuffer, (uint64_t)_ctaIndex, 0,
-          CommTraits<Default<P>>::buildTrd(flagcxDevicePrimBarrierSignal, 0,
-                                           0));
-    }
-    _coop.sync();
+    FLAGCX_DEVICE_SYNC_THREADS();
   }
 
-  // wait: spin on host-mapped inter signal array (leader only)
+  // wait: wait for all remote peers' signals at MY buffer
   FLAGCX_DEVICE_INLINE_DECORATOR void
   wait(flagcxDeviceMemoryOrder_t order = flagcxDeviceMemoryOrderAcqRel,
        flagcxDevNetFenceLevel fence = flagcxDevNetFenceLevel::Relaxed) {
-    _coop.sync();
-    if (_coop.threadRank() == 0 && _isLeader) {
+    if (_nTeamRanks <= 1)
+      return;
+    int nPeers = _nTeamRanks - 1;
+    FLAGCX_DEVICE_SYNC_THREADS();
+    // Each thread waits for a subset of peers (cooperative distribution)
+    for (int i = FLAGCX_THREAD_IDX_X; i < nPeers; i += FLAGCX_BLOCK_DIM_X) {
+      int peerIdx = (1 + _teamRank + i) % _nTeamRanks;
+      // Wait for peer's signal at slot [barrierSignal0 + peerIdx]
+      int signalIdx = _barrierSignal0 + peerIdx;
+      int absIdx = _contextId * _signalCount + signalIdx;
+      // Increment shadow (expected value) and spin on signal buffer
+      _shadowBuffer[absIdx] += 1;
+      uint64_t expected = _shadowBuffer[absIdx];
       int iter = 0;
-      while (Atomic::load(&_interSignals[_ctaIndex],
-                          flagcxDeviceMemoryOrderAcquire) < _epoch) {
+      while (Atomic::load(&_signalBuffer[absIdx],
+                          flagcxDeviceMemoryOrderAcquire) < expected) {
         Intrin::spinBackoff(iter++);
       }
     }
-    _coop.sync();
+    // Flush: ensure all signal FIFO entries from arrive() completed on wire
+    if (FLAGCX_THREAD_IDX_X == 0 && _fifoBuffer != nullptr) {
+      CommTraits<DefaultBackend<P>>::fifoFlush(_fifoBuffer);
+    }
+    FLAGCX_DEVICE_SYNC_THREADS();
   }
 
   // sync = arrive + wait
   FLAGCX_DEVICE_INLINE_DECORATOR void
   sync(flagcxDeviceMemoryOrder_t order = flagcxDeviceMemoryOrderAcqRel,
        flagcxDevNetFenceLevel fence = flagcxDevNetFenceLevel::Relaxed) {
-    arrive(order);
-    wait(order);
+    arrive(order, fence);
+    wait(order, fence);
   }
 };
 
-// ---- Barrier<Default<P>, flagcxTeamTagWorld, Coop> ----
+// ---- Barrier<DefaultBackend<P>, flagcxTeamTagWorld, Coop> ----
 // Composes intra + inter barriers.
 // Three-phase pattern for multi-node: intra → inter → intra.
 // Single-node: just one intra sync.
 template <typename P, typename Coop>
-struct Barrier<Default<P>, flagcxTeamTagWorld, Coop> {
-  using Comm = typename CommTraits<Default<P>>::Comm;
-  using Team = typename CommTraits<Default<P>>::Team;
-  using Net = typename CommTraits<Default<P>>::Net;
+struct Barrier<DefaultBackend<P>, flagcxTeamTagWorld, Coop> {
+  using Comm = typename CommTraits<DefaultBackend<P>>::Comm;
+  using Team = typename CommTraits<DefaultBackend<P>>::Team;
+  using Net = typename CommTraits<DefaultBackend<P>>::Net;
 
   Coop _coop;
-  Barrier<Default<P>, flagcxTeamTagIntra, Coop> _intra;
-  Barrier<Default<P>, flagcxTeamTagInter, Coop> _inter;
+  Barrier<DefaultBackend<P>, flagcxTeamTagIntra, Coop> _intra;
+  Barrier<DefaultBackend<P>, flagcxTeamTagInter, Coop> _inter;
   int _nInterPeers;
 
   // World barrier: intra (IPC) + inter (FIFO Signal)
@@ -981,9 +1034,7 @@ struct Barrier<Default<P>, flagcxTeamTagWorld, Coop> {
   arrive(flagcxDeviceMemoryOrder_t order = flagcxDeviceMemoryOrderAcqRel,
          flagcxDevNetFenceLevel fence = flagcxDevNetFenceLevel::Relaxed) {
     if (_nInterPeers > 0) {
-      _intra.arrive(flagcxDeviceMemoryOrderRelease);
-      _intra.wait(flagcxDeviceMemoryOrderRelease);
-      _inter.arrive(order);
+      _inter.arrive(order, fence);
     } else {
       _intra.arrive(order);
     }
@@ -993,7 +1044,7 @@ struct Barrier<Default<P>, flagcxTeamTagWorld, Coop> {
   wait(flagcxDeviceMemoryOrder_t order = flagcxDeviceMemoryOrderAcqRel,
        flagcxDevNetFenceLevel fence = flagcxDevNetFenceLevel::Relaxed) {
     if (_nInterPeers > 0) {
-      _inter.wait(order);
+      _inter.wait(order, fence);
       _intra.arrive(flagcxDeviceMemoryOrderAcquire);
       _intra.wait(flagcxDeviceMemoryOrderAcquire);
     } else {
@@ -1005,13 +1056,10 @@ struct Barrier<Default<P>, flagcxTeamTagWorld, Coop> {
   sync(flagcxDeviceMemoryOrder_t order = flagcxDeviceMemoryOrderAcqRel,
        flagcxDevNetFenceLevel fence = flagcxDevNetFenceLevel::Relaxed) {
     if (_nInterPeers > 0) {
-      // Phase 1: intra sync
-      _intra.arrive(flagcxDeviceMemoryOrderRelease);
-      _intra.wait(flagcxDeviceMemoryOrderRelease);
-      // Phase 2: inter signal+wait (leader only)
-      _inter.arrive(order);
-      _inter.wait(order);
-      // Phase 3: intra sync (broadcast inter completion)
+      // Phase 1: inter signal+wait (rank-to-rank across nodes)
+      _inter.arrive(order, fence);
+      _inter.wait(order, fence);
+      // Phase 2: intra sync (broadcast inter completion to local ranks)
       _intra.arrive(flagcxDeviceMemoryOrderAcquire);
       _intra.wait(flagcxDeviceMemoryOrderAcquire);
     } else {

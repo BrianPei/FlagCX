@@ -18,6 +18,7 @@
 #include "proxy.h"
 #include "reg_pool.h"
 #include "runner.h"
+#include "shmem_adaptor.h"
 #include "sym_heap.h"
 #include "timer.h"
 #include "transport.h"
@@ -85,7 +86,7 @@ static struct flagcxDeviceHandle globalDeviceHandle {
       // Event functions
       deviceAdaptor->eventCreate, deviceAdaptor->eventDestroy,
       deviceAdaptor->eventRecord, deviceAdaptor->eventSynchronize,
-      deviceAdaptor->eventQuery,
+      deviceAdaptor->eventQuery, deviceAdaptor->eventElapsedTime,
       // IpcMemHandle functions
       deviceAdaptor->ipcMemHandleCreate, deviceAdaptor->ipcMemHandleGet,
       deviceAdaptor->ipcMemHandleOpen, deviceAdaptor->ipcMemHandleClose,
@@ -118,6 +119,7 @@ void flagcxRebuildGlobalDeviceHandle() {
   globalDeviceHandle.eventRecord = deviceAdaptor->eventRecord;
   globalDeviceHandle.eventSynchronize = deviceAdaptor->eventSynchronize;
   globalDeviceHandle.eventQuery = deviceAdaptor->eventQuery;
+  globalDeviceHandle.eventElapsedTime = deviceAdaptor->eventElapsedTime;
   // IpcMemHandle functions
   globalDeviceHandle.ipcMemHandleCreate = deviceAdaptor->ipcMemHandleCreate;
   globalDeviceHandle.ipcMemHandleGet = deviceAdaptor->ipcMemHandleGet;
@@ -215,37 +217,52 @@ flagcxResult_t flagcxHandleFree(flagcxHandlerGroup_t handler) {
   return flagcxSuccess;
 }
 
-FLAGCX_PARAM(MemEnable, "MEM_ENABLE", 0);
-
-flagcxResult_t flagcxMemAlloc(void **ptr, size_t size) {
+flagcxResult_t flagcxMemAlloc(void **ptr, size_t size,
+                              flagcxMemAllocator_t allocator) {
   if (ptr == NULL || size == 0) {
     WARN("Invalid ptr(NULL) or size(0) for allocation.");
     return flagcxInvalidArgument;
   }
-  if (flagcxParamMemEnable()) {
-    FLAGCXCHECK(deviceAdaptor->gdrMemAlloc(ptr, size, NULL));
-    if (*ptr != NULL) {
-      INFO(FLAGCX_REG, "flagcxMemAlloc: GDR allocated [%p, %ld]", *ptr, size);
-    } else {
-      WARN("flagcxMemAlloc: GDR allocation failed");
-      return flagcxUnhandledDeviceError;
+  if (allocator == flagcxMemSHMEM) {
+    if (shmemAdaptor == nullptr) {
+      WARN("flagcxMemAlloc: flagcxMemSHMEM but shmemAdaptor not loaded");
+      return flagcxInternalError;
     }
+    FLAGCXCHECK(shmemAdaptor->malloc(ptr, size));
   } else {
-    FLAGCXCHECK(cclAdaptors[flagcxCCLAdaptorDevice]->memAlloc(ptr, size));
+    // flagcxMemCCL: dispatch based on homo/hetero
+    if (useHeteroComm()) {
+      FLAGCXCHECK(deviceAdaptor->gdrMemAlloc(ptr, size, NULL));
+      if (*ptr == NULL) {
+        WARN("flagcxMemAlloc: GDR allocation failed");
+        return flagcxUnhandledDeviceError;
+      }
+    } else {
+      FLAGCXCHECK(cclAdaptors[flagcxCCLAdaptorDevice]->memAlloc(ptr, size));
+    }
   }
   return flagcxSuccess;
 }
 
-flagcxResult_t flagcxMemFree(void *ptr) {
+flagcxResult_t flagcxMemFree(void *ptr, flagcxMemAllocator_t allocator) {
   if (ptr == NULL) {
     WARN("Invalid pointer(=NULL) for de-allocation.");
     return flagcxSuccess;
   }
-  if (flagcxParamMemEnable()) {
-    FLAGCXCHECK(deviceAdaptor->gdrMemFree(ptr, NULL));
-    INFO(FLAGCX_REG, "flagcxMemFree: GDR memory deallocated");
+  if (allocator == flagcxMemSHMEM) {
+    if (shmemAdaptor == nullptr) {
+      WARN("flagcxMemFree: flagcxMemSHMEM but shmemAdaptor not loaded");
+      return flagcxInternalError;
+    }
+    FLAGCXCHECK(shmemAdaptor->free(ptr));
+    INFO(FLAGCX_REG, "flagcxMemFree: SHMEM memory deallocated");
   } else {
-    FLAGCXCHECK(cclAdaptors[flagcxCCLAdaptorDevice]->memFree(ptr));
+    if (useHeteroComm()) {
+      FLAGCXCHECK(deviceAdaptor->gdrMemFree(ptr, NULL));
+      INFO(FLAGCX_REG, "flagcxMemFree: GDR memory deallocated");
+    } else {
+      FLAGCXCHECK(cclAdaptors[flagcxCCLAdaptorDevice]->memFree(ptr));
+    }
   }
   return flagcxSuccess;
 }
@@ -414,6 +431,74 @@ fail:
   info->fullRecvComms = NULL;
   info->nRanks = 0;
   info->nContexts = 0;
+  return res;
+}
+
+// Ensure full-mesh one-sided connections exist for this heteroComm.
+// If no data handle has been registered yet, lazily build a connection-only
+// handle at slot 0 so that signal/staging registration can proceed without
+// requiring a prior flagcxCommRegister call.
+// NOTE: This is a collective operation — all ranks must call it together.
+static flagcxResult_t
+flagcxOneSideEnsureFullMesh(struct flagcxHeteroComm *heteroComm) {
+  if (heteroComm == NULL || heteroComm->netAdaptor == NULL ||
+      heteroComm->netAdaptor->regMr == NULL)
+    return flagcxNotSupported;
+
+  // Already have connections?
+  if (heteroComm->oneSideHandleCount > 0 &&
+      heteroComm->oneSideHandles[0] != NULL &&
+      heteroComm->oneSideHandles[0]->fullRecvComms != NULL) {
+    return flagcxSuccess;
+  }
+
+  if (heteroComm->bootstrap == NULL)
+    return flagcxNotSupported;
+
+  flagcxResult_t res = flagcxSuccess;
+  struct flagcxOneSideHandleInfo *info = NULL;
+
+  // Grow array if needed
+  if (heteroComm->oneSideHandleCount >= heteroComm->oneSideHandleCapacity) {
+    int newCap = heteroComm->oneSideHandleCapacity == 0
+                     ? 4
+                     : heteroComm->oneSideHandleCapacity * 2;
+    struct flagcxOneSideHandleInfo **newArr =
+        (struct flagcxOneSideHandleInfo **)realloc(
+            heteroComm->oneSideHandles,
+            newCap * sizeof(struct flagcxOneSideHandleInfo *));
+    if (newArr == NULL)
+      return flagcxSystemError;
+    for (int i = heteroComm->oneSideHandleCapacity; i < newCap; i++)
+      newArr[i] = NULL;
+    heteroComm->oneSideHandles = newArr;
+    heteroComm->oneSideHandleCapacity = newCap;
+  }
+
+  FLAGCXCHECKGOTO(flagcxCalloc(&info, 1), res, fail);
+  FLAGCXCHECKGOTO(flagcxOneSideBuildFullMesh(heteroComm, info), res, fail_info);
+
+  // Store at current slot (should be slot 0 if this is truly the first)
+  {
+    int slot = heteroComm->oneSideHandleCount;
+    heteroComm->oneSideHandles[slot] = info;
+    heteroComm->oneSideHandleCount = slot + 1;
+
+    // Publish sendComms to RMA proxy so its progress thread can use them
+    if (slot == 0 && info->fullSendComms != NULL) {
+      flagcxHeteroRmaProxyPublishSendComms(heteroComm, info->fullSendComms);
+    }
+  }
+
+  INFO(FLAGCX_REG,
+       "flagcxOneSideEnsureFullMesh: lazily built full-mesh connections "
+       "(slot %d)",
+       heteroComm->oneSideHandleCount - 1);
+  return flagcxSuccess;
+
+fail_info:
+  free(info);
+fail:
   return res;
 }
 
@@ -726,19 +811,18 @@ flagcxResult_t flagcxOneSideSignalRegister(const flagcxComm_t comm, void *buff,
   }
 
   // Signal registration reuses full-mesh connections from this heteroComm's
-  // first data handle.  Requires at least one data handle first.
-  struct flagcxOneSideHandleInfo *firstDataHandle = NULL;
-  if (heteroComm->oneSideHandleCount > 0 &&
-      heteroComm->oneSideHandles[0] != NULL &&
-      heteroComm->oneSideHandles[0]->fullRecvComms != NULL) {
-    firstDataHandle = heteroComm->oneSideHandles[0];
+  // first data handle.  Lazily build them if not yet established.
+  {
+    flagcxResult_t meshRes = flagcxOneSideEnsureFullMesh(heteroComm);
+    if (meshRes != flagcxSuccess) {
+      INFO(FLAGCX_REG,
+           "flagcxOneSideSignalRegister: failed to ensure full-mesh (%d)",
+           (int)meshRes);
+      return meshRes;
+    }
   }
-  if (firstDataHandle == NULL) {
-    INFO(FLAGCX_REG,
-         "flagcxOneSideSignalRegister: no full-mesh connections for "
-         "this heteroComm, register a data buffer first");
-    return flagcxNotSupported;
-  }
+  struct flagcxOneSideHandleInfo *firstDataHandle =
+      heteroComm->oneSideHandles[0];
 
   flagcxResult_t res = flagcxSuccess;
   void *mrHandle = NULL;
@@ -861,12 +945,14 @@ fail_mr:
 }
 
 flagcxResult_t flagcxOneSideSignalDeregister(flagcxComm_t comm) {
-  if (comm == NULL || comm->heteroComm == NULL)
+  if (comm == NULL || comm->heteroComm == NULL) {
     return flagcxInternalError;
+  }
   struct flagcxHeteroComm *heteroComm = comm->heteroComm;
   struct flagcxOneSideHandleInfo *info = heteroComm->signalHandle;
-  if (info == NULL)
+  if (info == NULL) {
     return flagcxSuccess;
+  }
 
   if (heteroComm->netAdaptor != NULL) {
     if (info->localMrHandle != NULL && info->localRecvComm != NULL) {
@@ -926,19 +1012,18 @@ flagcxResult_t flagcxOneSideStagingRegister(const flagcxComm_t comm, void *buff,
   }
 
   // Staging registration reuses full-mesh connections from this heteroComm's
-  // first data handle.  Requires at least one data handle first.
-  struct flagcxOneSideHandleInfo *firstDataHandleStg = NULL;
-  if (heteroComm->oneSideHandleCount > 0 &&
-      heteroComm->oneSideHandles[0] != NULL &&
-      heteroComm->oneSideHandles[0]->fullRecvComms != NULL) {
-    firstDataHandleStg = heteroComm->oneSideHandles[0];
+  // first data handle.  Lazily build them if not yet established.
+  {
+    flagcxResult_t meshRes = flagcxOneSideEnsureFullMesh(heteroComm);
+    if (meshRes != flagcxSuccess) {
+      INFO(FLAGCX_REG,
+           "flagcxOneSideStagingRegister: failed to ensure full-mesh (%d)",
+           (int)meshRes);
+      return meshRes;
+    }
   }
-  if (firstDataHandleStg == NULL) {
-    INFO(FLAGCX_REG,
-         "flagcxOneSideStagingRegister: no full-mesh connections for "
-         "this heteroComm, register a data buffer first");
-    return flagcxNotSupported;
-  }
+  struct flagcxOneSideHandleInfo *firstDataHandleStg =
+      heteroComm->oneSideHandles[0];
 
   flagcxResult_t res = flagcxSuccess;
   void *mrHandle = NULL;
@@ -1179,7 +1264,8 @@ flagcxOneSideBarrierDeregister(const flagcxComm_t comm,
 }
 
 flagcxResult_t flagcxCommRegister(const flagcxComm_t comm, void *buff,
-                                  size_t size, void **handle) {
+                                  size_t size, void **handle,
+                                  flagcxMemAllocator_t allocator) {
   if (comm != nullptr) {
     FLAGCXCHECK(flagcxEnsureCommReady(comm));
   }
@@ -1204,6 +1290,12 @@ flagcxResult_t flagcxCommRegister(const flagcxComm_t comm, void *buff,
 
   // Null comm: pool-only registration, skip backend steps
   if (comm == nullptr) {
+    return flagcxSuccess;
+  }
+
+  // SHMEM path: buffer is in the NVSHMEM symmetric heap,
+  // no IPC handles or MR registration needed.
+  if (allocator == flagcxMemSHMEM) {
     return flagcxSuccess;
   }
 
@@ -1296,7 +1388,8 @@ fail:
   return res;
 }
 
-flagcxResult_t flagcxCommDeregister(const flagcxComm_t comm, void *handle) {
+flagcxResult_t flagcxCommDeregister(const flagcxComm_t comm, void *handle,
+                                    flagcxMemAllocator_t allocator) {
   if (comm != nullptr) {
     FLAGCXCHECK(flagcxEnsureCommReady(comm));
   }
@@ -1352,11 +1445,18 @@ flagcxResult_t flagcxCommDeregister(const flagcxComm_t comm, void *handle) {
 
 flagcxResult_t flagcxCommWindowRegister(flagcxComm_t comm, void *buff,
                                         size_t size, flagcxWindow_t *win,
-                                        int winFlags) {
+                                        int winFlags,
+                                        flagcxMemAllocator_t allocator) {
   if (win == nullptr || *win != nullptr) {
     return flagcxInvalidArgument;
   }
   FLAGCXCHECK(flagcxEnsureCommReady(comm));
+  // SHMEM path: buffer is already in the NVSHMEM symmetric heap,
+  // globally accessible via nvshmem_ptr — no registration needed.
+  if (allocator == flagcxMemSHMEM) {
+    *win = nullptr;
+    return flagcxSuccess;
+  }
   if (useHomoComm(comm) && !useHeteroComm()) {
     FLAGCXCHECK(flagcxCalloc(win, 1));
     flagcxResult_t res =
@@ -1402,9 +1502,12 @@ flagcxResult_t flagcxCommWindowRegister(flagcxComm_t comm, void *buff,
   return flagcxSuccess;
 }
 
-flagcxResult_t flagcxCommWindowDeregister(flagcxComm_t comm,
-                                          flagcxWindow_t win) {
+flagcxResult_t flagcxCommWindowDeregister(flagcxComm_t comm, flagcxWindow_t win,
+                                          flagcxMemAllocator_t allocator) {
   if (win == nullptr) {
+    return flagcxSuccess;
+  }
+  if (allocator == flagcxMemSHMEM) {
     return flagcxSuccess;
   }
   FLAGCXCHECK(flagcxEnsureCommReady(comm));
@@ -2270,12 +2373,11 @@ flagcxResult_t flagcxCommDestroy(flagcxComm_t comm) {
         cclAdaptors[flagcxCCLAdaptorDevice]->commDestroy(comm->homoComm));
   }
 
-  if (!useHomoComm(comm)) {
-    // Tear down inter-node signal relay first: drains FIFOs and closes RDMA
-    // connections. Must run before flagcxHeteroCommDestroy, which frees
-    // proxyState and heteroComm. Proxy threads are stopped inside
-    // flagcxCommRelayDestroy via the bootstrap barrier before any teardown.
-    FLAGCXCHECK(flagcxCommRelayDestroy(comm));
+  if (!useHomoComm(comm) || useHeteroComm()) {
+    // Backend-level comm cleanup: relay teardown, IPC table cleanup.
+    // Must run before flagcxHeteroCommDestroy, which frees proxyState and
+    // heteroComm.
+    FLAGCXCHECK(flagcxCommCleanup(comm));
     // Destroy hetero comm (stops/joins proxy threads, frees proxyState)
     flagcxOneSideStagingDeregister(comm);
     flagcxOneSideSignalDeregister(comm);

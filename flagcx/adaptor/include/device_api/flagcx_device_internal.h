@@ -64,18 +64,13 @@ struct flagcxDevCommInternal {
   flagcxShmHandle_t myShmHandle;     // own shm handle (flagcxShmClose)
   flagcxShmHandle_t *peerShmHandles; // peer shm handles [nLocalRanks]
 
-  // ---- Inter-node signal relay (set if nInterPeers > 0, else nullptr) ----
-  uint64_t *interSignalFlags;     // device pointer (from hostGetDevicePointer)
-  uint64_t *interSignalFlagsHost; // host pointer (for recv thread + dealloc)
+  // ---- Inter-node signal relay (set if nInterPeers > 0) ----
   int nInterPeers;     // number of inter-node peers (set on ALL ranks)
-  bool isInterLeader;  // true only on localRank 0 (manages connections)
   int *interPeerRanks; // global ranks of inter-node peers
-  // netAdaptor connections for signal relay (one-sided RDMA atomic)
-  void **signalSendComms;  // [nInterPeers] sendComm (for iputSignal)
-  void **barrierRecvComms; // [nInterPeers] recvComm (kept alive for QP)
-  void *barrierHandleInfo; // flagcxOneSideHandleInfo* with rkeys/baseVas
-  // netAdaptor pointer (cached for proxy)
-  void *netAdaptorPtr;
+  // NCCL GIN-style barrier fields (all ranks)
+  int teamRank;          // this rank's position in the inter-node team
+  int nTeamRanks;        // total number of nodes (team size for barrier)
+  int barrierSignalBase; // first signal slot index used for barriers
 
   // ---- One-sided Default layer (set if interSignalCount/interCounterCount >
   // 0)
@@ -101,6 +96,7 @@ struct flagcxDevCommInternal {
   // ---- Device pointer cache (for Triton integration) ----
   void *cachedDevicePtr;      // Lazily allocated by flagcxDevCommGetDevicePtr
   void *cachedNetContextsPtr; // Device memory for pre-allocated flagcxDevNet[]
+  void *cachedGridBarrierPtr; // Device memory for grid sync state (2 x uint32)
   pthread_mutex_t cachedPtrMutex; // Protects lazy init of cachedDevicePtr and
                                   // cachedNetContextsPtr
 };
