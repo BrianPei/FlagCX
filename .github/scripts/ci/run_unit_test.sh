@@ -86,15 +86,15 @@ run_device_api() {
 
   cd "$suite_dir"
   mpirun -np "$FLAGCX_CI_INTRA_NP" --allow-run-as-root "${common_env[@]}" \
-    build/bin/test_device_api "${flags[@]}"
+    build/bin/test_device_api_intra "${flags[@]}"
   mpirun -np "$FLAGCX_CI_INTRA_NP" --allow-run-as-root "${common_env[@]}" \
     build/bin/test_device_ir_intra "${flags[@]}"
 
   mpirun --allow-run-as-root \
     -np "$FLAGCX_CI_NODE_NP" "${common_env[@]}" "${FLAGCX_CI_NODE1_MPI_ARGS[@]}" \
-    build/bin/test_device_api "${flags[@]}" \
+    build/bin/test_device_api_inter "${flags[@]}" \
     : -np "$FLAGCX_CI_NODE_NP" "${common_env[@]}" "${FLAGCX_CI_NODE2_MPI_ARGS[@]}" \
-    build/bin/test_device_api "${flags[@]}"
+    build/bin/test_device_api_inter "${flags[@]}"
   mpirun --allow-run-as-root \
     -np "$FLAGCX_CI_NODE_NP" "${common_env[@]}" "${FLAGCX_CI_NODE1_MPI_ARGS[@]}" \
     build/bin/test_device_ir_inter "${flags[@]}" \

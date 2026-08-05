@@ -29,8 +29,8 @@
 #include "tools.h"
 
 #include <algorithm>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <unistd.h>
 
@@ -285,16 +285,16 @@ int main(int argc, char *argv[]) {
       if (proc == 0 && color == 0)
         printf("  %-30s SKIPPED\n", "K3 PutValue");
     } else {
-      FLAGCXCHECK(devHandle->deviceMemset(
-          (char *)recvBuff + putValBase, 0,
-          (size_t)totalProcs * sizeof(uint64_t), flagcxMemDevice, NULL));
+      FLAGCXCHECK(devHandle->deviceMemset((char *)recvBuff + putValBase, 0,
+                                          (size_t)totalProcs * sizeof(uint64_t),
+                                          flagcxMemDevice, NULL));
       FLAGCXCHECK(
           flagcxInterTestPutValue(recvMem, devComm, stream, putValBase));
       FLAGCXCHECK(devHandle->streamSynchronize(stream));
-      FLAGCXCHECK(devHandle->deviceMemcpy(
-          (char *)hostBuff + putValBase, (char *)recvBuff + putValBase,
-          (size_t)totalProcs * sizeof(uint64_t), flagcxMemcpyDeviceToHost,
-          NULL));
+      FLAGCXCHECK(devHandle->deviceMemcpy((char *)hostBuff + putValBase,
+                                          (char *)recvBuff + putValBase,
+                                          (size_t)totalProcs * sizeof(uint64_t),
+                                          flagcxMemcpyDeviceToHost, NULL));
       bool k3Ok = verifyPutValue(hostBuff, putValBase, totalProcs, proc);
       printResult("K3 PutValue", k3Ok, proc);
     }
