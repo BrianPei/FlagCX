@@ -60,6 +60,13 @@ build_suite() {
   make -C "$suite_dir" --jobs="$(nproc)" "${args[@]}"
 }
 
+run_make_target() {
+  local suite_dir="$PROJECT_ROOT/test/unittest/$SUITE"
+  local target=$1
+  local -a args=("${FLAGCX_CI_TEST_MAKE_ARGS[@]}")
+  make -C "$suite_dir" "$target" "${args[@]}"
+}
+
 run_device_api() {
   local suite_dir="$PROJECT_ROOT/test/unittest/device_api"
   declare -p FLAGCX_CI_MPI_ENV_ARGS >/dev/null 2>&1 || FLAGCX_CI_MPI_ENV_ARGS=()
@@ -106,14 +113,14 @@ run_suite() {
   local suite_dir="$PROJECT_ROOT/test/unittest/$SUITE"
   case "$SUITE" in
     adaptor|core|p2p|service)
-      make -C "$suite_dir" run-unit
+      run_make_target run-unit
       ;;
     rma)
-      make -C "$suite_dir" run-mpi
+      run_make_target run-mpi
       ;;
     runner)
       : "${FLAGCX_CI_RUNNER_NP:?The platform set_env script must define FLAGCX_CI_RUNNER_NP}"
-      make -C "$suite_dir" run-unit
+      run_make_target run-unit
       cd "$suite_dir"
       mpirun -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
         ./build/bin/runner_mpi_tests
