@@ -591,63 +591,13 @@ static flagcxResult_t flagcxOneSideGetMrInfo(struct flagcxNetAdaptor *net,
     return flagcxInvalidArgument;
   if (net->getMrInfo == NULL)
     return flagcxNotSupported;
-
   memset(mrInfo, 0, sizeof(*mrInfo));
-  FLAGCXCHECK(net->getMrInfo(mrHandle, mrInfo));
+  flagcxResult_t res = net->getMrInfo(mrHandle, mrInfo);
+  if (res != flagcxSuccess)
+    return res;
   if (mrInfo->nKeys == 0 || mrInfo->nKeys > FLAGCX_NET_MAX_MR_KEYS)
     return flagcxInternalError;
   return flagcxSuccess;
-}
-
-static flagcxResult_t
-flagcxOneSideExchangeMrInfo(struct bootstrapState *bootstrap, int rank,
-                            int nranks, void *buffer, size_t size,
-                            const struct flagcxNetMrInfo *localMrInfo,
-                            struct flagcxOneSideHandleInfo *info) {
-  if (bootstrap == NULL || info == NULL || localMrInfo == NULL || rank < 0 ||
-      rank >= nranks)
-    return flagcxInvalidArgument;
-
-  flagcxResult_t res = flagcxSuccess;
-  FLAGCXCHECKGOTO(flagcxCalloc(&info->baseVas, nranks), res, fail);
-  FLAGCXCHECKGOTO(flagcxCalloc(&info->regionSizes, nranks), res, fail);
-  FLAGCXCHECKGOTO(flagcxCalloc(&info->mrInfos, nranks), res, fail);
-
-  info->baseVas[rank] = (uintptr_t)buffer;
-  info->regionSizes[rank] = size;
-  info->mrInfos[rank] = *localMrInfo;
-  info->nRanks = nranks;
-
-  FLAGCXCHECKGOTO(
-      bootstrapCollAllGather(bootstrap, info->baseVas, sizeof(uintptr_t)), res,
-      fail);
-  FLAGCXCHECKGOTO(
-      bootstrapCollAllGather(bootstrap, info->regionSizes, sizeof(size_t)), res,
-      fail);
-  FLAGCXCHECKGOTO(bootstrapCollAllGather(bootstrap, info->mrInfos,
-                                         sizeof(struct flagcxNetMrInfo)),
-                  res, fail);
-  return flagcxSuccess;
-
-fail:
-  free(info->mrInfos);
-  free(info->regionSizes);
-  free(info->baseVas);
-  info->mrInfos = NULL;
-  info->regionSizes = NULL;
-  info->baseVas = NULL;
-  return res;
-}
-
-static void flagcxOneSideFreeMrInfo(struct flagcxOneSideHandleInfo *info) {
-  if (info == NULL)
-    return;
-  free(info->mrInfos);
-  free(info->regionSizes);
-  free(info->baseVas);
-  info->mrInfos = NULL;
-  info->regionSizes = NULL;
-  info->baseVas = NULL;
 }
 
 flagcxResult_t flagcxOneSideRegisterInternal(flagcxHeteroComm_t heteroComm,
@@ -762,8 +712,9 @@ flagcxResult_t flagcxOneSideRegisterInternal(flagcxHeteroComm_t heteroComm,
   if (res != flagcxSuccess || mrHandle == NULL) {
     INFO(FLAGCX_REG, "flagcxOneSideRegister: regMr failed, res=%d", res);
     res = flagcxNotSupported;
-    goto fail_mr;
+    goto fail_mesh;
   }
+
   FLAGCXCHECKGOTO(
       flagcxOneSideGetMrInfo(heteroComm->netAdaptor, mrHandle, &localMrInfo),
       res, fail_mr);
@@ -771,11 +722,29 @@ flagcxResult_t flagcxOneSideRegisterInternal(flagcxHeteroComm_t heteroComm,
   // Allgather MR info
   {
     int nranks = heteroComm->nRanks;
-    FLAGCXCHECKGOTO(flagcxOneSideExchangeMrInfo(heteroComm->bootstrap,
-                                                heteroComm->rank, nranks, buff,
-                                                size, &localMrInfo, info),
-                    res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->baseVas, nranks), res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->rkeys, nranks), res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->lkeys, nranks), res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->mrInfos, nranks), res, fail_mr);
+
+    info->baseVas[heteroComm->rank] = (uintptr_t)buff;
+    info->regionSize = size;
+    info->nRanks = nranks;
+    info->mrInfos[heteroComm->rank] = localMrInfo;
     info->localMrHandle = mrHandle;
+
+    FLAGCXCHECKGOTO(bootstrapCollAllGather(heteroComm->bootstrap,
+                                           (void *)info->baseVas,
+                                           sizeof(uintptr_t)),
+                    res, fail_mr);
+    FLAGCXCHECKGOTO(bootstrapCollAllGather(heteroComm->bootstrap,
+                                           (void *)info->mrInfos,
+                                           sizeof(struct flagcxNetMrInfo)),
+                    res, fail_mr);
+    for (int i = 0; i < nranks; i++) {
+      info->rkeys[i] = info->mrInfos[i].rkeys[0];
+      info->lkeys[i] = info->mrInfos[i].lkeys[0];
+    }
 
     int slot = heteroComm->oneSideHandleCount;
     heteroComm->oneSideHandles[slot] = info;
@@ -800,7 +769,12 @@ flagcxResult_t flagcxOneSideRegisterInternal(flagcxHeteroComm_t heteroComm,
   return flagcxSuccess;
 
 fail_mr:
-  flagcxOneSideFreeMrInfo(info);
+  if (info) {
+    free(info->mrInfos);
+    free(info->lkeys);
+    free(info->rkeys);
+    free(info->baseVas);
+  }
   if (regComm && mrHandle)
     heteroComm->netAdaptor->deregMr(regComm, mrHandle);
   if (isFirstHandle) {
@@ -872,7 +846,10 @@ flagcxResult_t flagcxOneSideDeregister(struct flagcxHeteroComm *heteroComm) {
       }
     }
 
-    flagcxOneSideFreeMrInfo(info);
+    free(info->mrInfos);
+    free(info->baseVas);
+    free(info->rkeys);
+    free(info->lkeys);
     free(info);
     heteroComm->oneSideHandles[i] = NULL;
   }
@@ -1022,9 +999,9 @@ flagcxResult_t flagcxOneSideSignalRegister(const flagcxComm_t comm, void *buff,
   }
   if (res != flagcxSuccess || mrHandle == NULL) {
     INFO(FLAGCX_REG, "flagcxOneSideSignalRegister: regMr failed, res=%d", res);
-    res = flagcxNotSupported;
-    goto fail_mr;
+    return flagcxNotSupported;
   }
+
   FLAGCXCHECKGOTO(
       flagcxOneSideGetMrInfo(heteroComm->netAdaptor, mrHandle, &localMrInfo),
       res, fail_mr);
@@ -1032,12 +1009,30 @@ flagcxResult_t flagcxOneSideSignalRegister(const flagcxComm_t comm, void *buff,
   {
     int nranks = heteroComm->nRanks;
     FLAGCXCHECKGOTO(flagcxCalloc(&info, 1), res, fail_mr);
-    FLAGCXCHECKGOTO(flagcxOneSideExchangeMrInfo(heteroComm->bootstrap,
-                                                heteroComm->rank, nranks, buff,
-                                                size, &localMrInfo, info),
-                    res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->baseVas, nranks), res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->rkeys, nranks), res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->lkeys, nranks), res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->mrInfos, nranks), res, fail_mr);
+
+    info->baseVas[heteroComm->rank] = (uintptr_t)buff;
+    info->regionSize = size;
+    info->nRanks = nranks;
+    info->mrInfos[heteroComm->rank] = localMrInfo;
     info->localMrHandle = mrHandle;
     info->localRecvComm = selfRecvComm;
+    info->signalIpcSlot = -1;
+    FLAGCXCHECKGOTO(bootstrapCollAllGather(heteroComm->bootstrap,
+                                           (void *)info->baseVas,
+                                           sizeof(uintptr_t)),
+                    res, fail_mr);
+    FLAGCXCHECKGOTO(bootstrapCollAllGather(heteroComm->bootstrap,
+                                           (void *)info->mrInfos,
+                                           sizeof(struct flagcxNetMrInfo)),
+                    res, fail_mr);
+    for (int i = 0; i < nranks; i++) {
+      info->rkeys[i] = info->mrInfos[i].rkeys[0];
+      info->lkeys[i] = info->mrInfos[i].lkeys[0];
+    }
     heteroComm->signalHandle = info;
     INFO(FLAGCX_REG, "Signal register allgather results (rank %d, nranks %d):",
          heteroComm->rank, nranks);
@@ -1055,7 +1050,10 @@ flagcxResult_t flagcxOneSideSignalRegister(const flagcxComm_t comm, void *buff,
 
 fail_mr:
   if (info) {
-    flagcxOneSideFreeMrInfo(info);
+    free(info->mrInfos);
+    free(info->lkeys);
+    free(info->rkeys);
+    free(info->baseVas);
     free(info);
   }
   if (regComm != NULL && mrHandle != NULL)
@@ -1088,17 +1086,11 @@ flagcxResult_t flagcxOneSideSignalDeregister(flagcxComm_t comm) {
   if (heteroComm->rmaProxy != NULL && heteroComm->rmaProxy->ipcState != NULL)
     flagcxHeteroRmaIpcDestroy(heteroComm);
 
-  // Release IPC and network state independently.
-  if (heteroComm->rmaSignalIpcSlot >= 0)
-    releaseIpcTableSlot(comm, heteroComm->rmaSignalIpcSlot);
-  heteroComm->rmaSignalIpcSlot = -1;
-  heteroComm->rmaSignalBase = NULL;
-  heteroComm->rmaSignalSize = 0;
-
-  if (info != NULL) {
-    flagcxOneSideFreeMrInfo(info);
-    free(info);
-  }
+  free(info->mrInfos);
+  free(info->baseVas);
+  free(info->rkeys);
+  free(info->lkeys);
+  free(info);
   heteroComm->signalHandle = NULL;
   return flagcxSuccess;
 }
@@ -1167,9 +1159,9 @@ flagcxResult_t flagcxOneSideStagingRegister(const flagcxComm_t comm, void *buff,
   }
   if (res != flagcxSuccess || mrHandle == NULL) {
     INFO(FLAGCX_REG, "flagcxOneSideStagingRegister: regMr failed, res=%d", res);
-    res = flagcxNotSupported;
-    goto fail_mr;
+    return flagcxNotSupported;
   }
+
   FLAGCXCHECKGOTO(
       flagcxOneSideGetMrInfo(heteroComm->netAdaptor, mrHandle, &localMrInfo),
       res, fail_mr);
@@ -1177,12 +1169,30 @@ flagcxResult_t flagcxOneSideStagingRegister(const flagcxComm_t comm, void *buff,
   {
     int nranks = heteroComm->nRanks;
     FLAGCXCHECKGOTO(flagcxCalloc(&info, 1), res, fail_mr);
-    FLAGCXCHECKGOTO(flagcxOneSideExchangeMrInfo(heteroComm->bootstrap,
-                                                heteroComm->rank, nranks, buff,
-                                                size, &localMrInfo, info),
-                    res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->baseVas, nranks), res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->rkeys, nranks), res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->lkeys, nranks), res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->mrInfos, nranks), res, fail_mr);
+
+    info->baseVas[heteroComm->rank] = (uintptr_t)buff;
+    info->regionSize = size;
+    info->nRanks = nranks;
+    info->mrInfos[heteroComm->rank] = localMrInfo;
     info->localMrHandle = mrHandle;
     info->localRecvComm = selfRecvComm;
+
+    FLAGCXCHECKGOTO(bootstrapCollAllGather(heteroComm->bootstrap,
+                                           (void *)info->baseVas,
+                                           sizeof(uintptr_t)),
+                    res, fail_mr);
+    FLAGCXCHECKGOTO(bootstrapCollAllGather(heteroComm->bootstrap,
+                                           (void *)info->mrInfos,
+                                           sizeof(struct flagcxNetMrInfo)),
+                    res, fail_mr);
+    for (int i = 0; i < nranks; i++) {
+      info->rkeys[i] = info->mrInfos[i].rkeys[0];
+      info->lkeys[i] = info->mrInfos[i].lkeys[0];
+    }
     heteroComm->stagingHandle = info;
     INFO(FLAGCX_REG, "Staging register allgather results (rank %d, nranks %d):",
          heteroComm->rank, nranks);
@@ -1196,7 +1206,10 @@ flagcxResult_t flagcxOneSideStagingRegister(const flagcxComm_t comm, void *buff,
 
 fail_mr:
   if (info) {
-    flagcxOneSideFreeMrInfo(info);
+    free(info->mrInfos);
+    free(info->lkeys);
+    free(info->rkeys);
+    free(info->baseVas);
     free(info);
   }
   if (regComm != NULL && mrHandle != NULL)
@@ -1219,7 +1232,10 @@ flagcxResult_t flagcxOneSideStagingDeregister(const flagcxComm_t comm) {
     }
   }
 
-  flagcxOneSideFreeMrInfo(info);
+  free(info->mrInfos);
+  free(info->baseVas);
+  free(info->rkeys);
+  free(info->lkeys);
   free(info);
   heteroComm->stagingHandle = NULL;
   return flagcxSuccess;
@@ -1246,6 +1262,7 @@ flagcxOneSideBarrierRegister(const flagcxComm_t comm, void *recvComm,
   flagcxResult_t res = flagcxSuccess;
   void *mrHandle = NULL;
   struct flagcxNetMrInfo localMrInfo = {};
+  uintptr_t baseVa = 0;
   struct flagcxOneSideHandleInfo *info = NULL;
 
   // Leaders (recvComm != NULL): register MR and extract keys
@@ -1261,6 +1278,7 @@ flagcxOneSideBarrierRegister(const flagcxComm_t comm, void *recvComm,
     }
     FLAGCXCHECKGOTO(flagcxOneSideGetMrInfo(net, mrHandle, &localMrInfo), res,
                     fail_mr);
+    baseVa = (uintptr_t)buff;
   }
 
   // ALL ranks: allocate info, populate own entry, AllGather
@@ -1268,14 +1286,30 @@ flagcxOneSideBarrierRegister(const flagcxComm_t comm, void *recvComm,
     int nranks = comm->nranks;
     int myRank = comm->rank;
     FLAGCXCHECKGOTO(flagcxCalloc(&info, 1), res, fail_mr);
-    void *localBuffer = mrHandle == NULL ? NULL : buff;
-    size_t localSize = mrHandle == NULL ? 0 : size;
-    FLAGCXCHECKGOTO(flagcxOneSideExchangeMrInfo(comm->bootstrap, myRank, nranks,
-                                                localBuffer, localSize,
-                                                &localMrInfo, info),
-                    res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->baseVas, nranks), res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->rkeys, nranks), res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->lkeys, nranks), res, fail_mr);
+    FLAGCXCHECKGOTO(flagcxCalloc(&info->mrInfos, nranks), res, fail_mr);
+
+    info->baseVas[myRank] = baseVa;
+    info->regionSize = size;
+    info->nRanks = nranks;
+    info->mrInfos[myRank] = localMrInfo;
     info->localMrHandle = mrHandle;
     info->localRecvComm = recvComm;
+
+    FLAGCXCHECKGOTO(bootstrapCollAllGather(comm->bootstrap,
+                                           (void *)info->baseVas,
+                                           sizeof(uintptr_t)),
+                    res, fail_mr);
+    FLAGCXCHECKGOTO(bootstrapCollAllGather(comm->bootstrap,
+                                           (void *)info->mrInfos,
+                                           sizeof(struct flagcxNetMrInfo)),
+                    res, fail_mr);
+    for (int i = 0; i < nranks; i++) {
+      info->rkeys[i] = info->mrInfos[i].rkeys[0];
+      info->lkeys[i] = info->mrInfos[i].lkeys[0];
+    }
 
     INFO(FLAGCX_REG,
          "Barrier register allgather results (rank %d, nranks %d):", myRank,
@@ -1291,7 +1325,10 @@ flagcxOneSideBarrierRegister(const flagcxComm_t comm, void *recvComm,
 
 fail_mr:
   if (info) {
-    flagcxOneSideFreeMrInfo(info);
+    free(info->mrInfos);
+    free(info->lkeys);
+    free(info->rkeys);
+    free(info->baseVas);
     free(info);
   }
   if (mrHandle != NULL) {
@@ -1317,7 +1354,10 @@ flagcxOneSideBarrierDeregister(const flagcxComm_t comm,
     }
   }
 
-  flagcxOneSideFreeMrInfo(info);
+  free(info->mrInfos);
+  free(info->baseVas);
+  free(info->rkeys);
+  free(info->lkeys);
   free(info);
   return flagcxSuccess;
 }

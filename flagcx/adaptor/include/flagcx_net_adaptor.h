@@ -33,6 +33,7 @@ struct flagcxNetMrInfo {
 //         listen, connect, accept, closeSend, closeRecv, closeListen,
 //         regMr, regMrDmaBuf, deregMr, isend, irecv, iflush, test,
 //         iput, iget, iputSignal, getDevFromName
+//   v2 — adds iputBatch (optional one-sided batch WRITE)
 //   latest — adds optional batch helpers and transport-neutral MR metadata
 
 struct flagcxNetAdaptor_v1 {

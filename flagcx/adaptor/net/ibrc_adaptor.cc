@@ -1973,16 +1973,10 @@ flagcxIbDrainDeferredMrsWithCallback(struct flagcxIbNetCommBase *base,
   return flagcxSuccess;
 }
 
-static flagcxResult_t
-flagcxIbDrainDeferredMrs(struct flagcxIbNetCommBase *base) {
-  return flagcxIbDrainDeferredMrsWithCallback(base, flagcxIbDeregMrInternal);
-}
-
 static flagcxResult_t flagcxIbGetMrInfo(void *mhandle,
                                         struct flagcxNetMrInfo *info) {
   if (mhandle == NULL || info == NULL)
     return flagcxInvalidArgument;
-
   memset(info, 0, sizeof(*info));
   struct flagcxIbMrHandle *wrapper = (struct flagcxIbMrHandle *)mhandle;
   for (int i = 0; i < FLAGCX_IB_MAX_DEVS_PER_NIC; i++) {
@@ -3240,4 +3234,4 @@ struct flagcxNetAdaptor flagcxNetIb = {
     flagcxIbGetDevFromName,
 
     // Optional one-sided batch helpers and MR metadata
-    flagcxIbIputBatch, flagcxIbTestBatch, flagcxIbIgetBatch, flagcxIbGetMrInfo};
+    flagcxIbIputBatch, NULL, NULL, flagcxIbGetMrInfo};

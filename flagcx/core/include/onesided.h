@@ -18,7 +18,9 @@ struct flagcxNetMrInfo;
 
 struct flagcxOneSideHandleInfo {
   uintptr_t *baseVas;
-  size_t *regionSizes;             // [nRanks]
+  size_t regionSize; // size of the registered memory region (bytes)
+  uint32_t *rkeys;
+  uint32_t *lkeys;
   struct flagcxNetMrInfo *mrInfos; // [nRanks], including per-NIC keys
   void *localMrHandle;             // local rank's MR handle for deregMr
   void *localRecvComm; // recvComm used for MR registration (PD match)
