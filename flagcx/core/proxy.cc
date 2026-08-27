@@ -713,7 +713,9 @@ proxyProgressAsync(struct flagcxProxyLocalPeer *peer, flagcxProxyAsyncOp *op,
               resources->netDev, (void *)op->reqBuff, &resources->netSendComm));
         } else {
           if (dmaBufferSupport &&
-              resources->netAdaptor == getNetAdaptor(RDMA)) {
+              deviceAdaptor->getHandleForAddressRange != NULL &&
+              resources->netAdaptor->regMrDmaBuf != NULL &&
+              resources->netAdaptor == getUnifiedNetAdaptor(IBRC)) {
             INFO(FLAGCX_PROXY,
                  "Registering memory region with DMA-BUF support");
             int dmabuf_fd;
@@ -752,7 +754,9 @@ proxyProgressAsync(struct flagcxProxyLocalPeer *peer, flagcxProxyAsyncOp *op,
           FLAGCXCHECK(resources->netAdaptor->accept(resources->netListenComm,
                                                     &resources->netRecvComm));
         } else {
-          if (dmaBufferSupport) {
+          if (dmaBufferSupport &&
+              deviceAdaptor->getHandleForAddressRange != NULL &&
+              resources->netAdaptor->regMrDmaBuf != NULL) {
             INFO(FLAGCX_PROXY,
                  "Registering memory region with DMA-BUF support");
             int dmabuf_fd;
@@ -804,7 +808,9 @@ proxyProgressAsync(struct flagcxProxyLocalPeer *peer, flagcxProxyAsyncOp *op,
         // send side
         struct sendNetResources *resources =
             (struct sendNetResources *)(op->connection->transportResources);
-        if (dmaBufferSupport) {
+        if (dmaBufferSupport &&
+            deviceAdaptor->getHandleForAddressRange != NULL &&
+            resources->netAdaptor->regMrDmaBuf != NULL) {
           int dmabuf_fd;
           FLAGCXCHECK(deviceAdaptor->getHandleForAddressRange(
               (void *)&dmabuf_fd, (void *)info->buffer, info->size, 0));
@@ -821,7 +827,9 @@ proxyProgressAsync(struct flagcxProxyLocalPeer *peer, flagcxProxyAsyncOp *op,
         // recv side
         struct recvNetResources *resources =
             (struct recvNetResources *)(op->connection->transportResources);
-        if (dmaBufferSupport) {
+        if (dmaBufferSupport &&
+            deviceAdaptor->getHandleForAddressRange != NULL &&
+            resources->netAdaptor->regMrDmaBuf != NULL) {
           int dmabuf_fd;
           FLAGCXCHECK(deviceAdaptor->getHandleForAddressRange(
               (void *)&dmabuf_fd, (void *)info->buffer, info->size, 0));
