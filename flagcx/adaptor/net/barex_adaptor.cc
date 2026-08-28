@@ -65,8 +65,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
-#include <limits.h>
-#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -309,9 +307,10 @@ struct BarexConnectState {
 };
 
 struct PendingAccept {
+  /* A FlagCX listen handle is reusable. Multiple connectors can therefore
+     complete their HELLO before the engine drains accept(), and must retain
+     FIFO association with that handle. */
   std::deque<XChannel *> channels;
-  int dev = -1;
-  int nicId = -1;
 };
 
 class BarexNetCallback; /* fwd */
@@ -380,19 +379,19 @@ public:
     if (type == BAREX_MSG_HELLO && len >= sizeof(BarexHelloMsg)) {
       BarexHelloMsg hello;
       memcpy(&hello, buf, sizeof(hello));
-      bool accepted = false;
+      bool rejectChannel = false;
       {
         std::lock_guard<std::mutex> lk(engine_->mu);
         auto it = engine_->pendingAccepts.find(hello.commId);
-        if (it != engine_->pendingAccepts.end() &&
-            channel->GetLocalNicId() == it->second.nicId) {
+        if (it == engine_->pendingAccepts.end())
+          rejectChannel = true;
+        else
           it->second.channels.push_back(channel);
-          accepted = true;
-        }
       }
-      if (!accepted) {
+      if (rejectChannel) {
         WARN("NET/BAREX : HELLO for unknown commId 0x%llx",
              (unsigned long long)hello.commId);
+        channel->Destroy();
       }
       return;
     }
@@ -831,6 +830,8 @@ static flagcxResult_t barexConnect(int dev, void *opaqueHandle,
 
 /* Non-blocking: ready once the connector's HELLO bound a channel. */
 static flagcxResult_t barexAccept(void *listenComm, void **recvComm) {
+  if (recvComm == nullptr)
+    return flagcxInvalidArgument;
   *recvComm = nullptr;
   auto *lc = static_cast<BarexListenComm *>(listenComm);
   if (lc == nullptr)
@@ -1252,7 +1253,9 @@ static flagcxResult_t barexIflush(void *recvComm, int n, void **data,
   (void)data;
   (void)sizes;
   (void)mhandles;
-  *request = (void *)0x1;
+  if (request == nullptr)
+    return flagcxInvalidArgument;
+  *request = reinterpret_cast<void *>(kCompletedRequest);
   return flagcxSuccess;
 }
 
