@@ -258,14 +258,8 @@ struct flagcxDeviceAdaptor_latest {
 
   // Classify an address independently from IPC-export capability. Managed
   // and device allocations report FLAGCX_PTR_CUDA; ordinary/pinned host
-  // allocations report FLAGCX_PTR_HOST. Unsupported backends return
-  // flagcxNotSupported.
+  // allocations report FLAGCX_PTR_HOST. Optional for v1 plugins.
   flagcxResult_t (*getPointerType)(const void *ptr, int *ptrType);
-
-  // Return the allocation containing ptr. IPC runtimes may export the whole
-  // allocation and map its base even when ptr refers to an interior address.
-  // This optional callback lets common IPC code preserve that user offset.
-  flagcxResult_t (*getAddressRange)(const void *ptr, void **base, size_t *size);
 };
 
 #define flagcxDeviceAdaptor flagcxDeviceAdaptor_latest

@@ -207,12 +207,22 @@ struct BarexMr {
   size_t size = 0;
   accl::barex::device_type dtype = accl::barex::CPU;
   int devId = 0;
-  int mrFlags = FLAGCX_NET_MR_FLAG_NONE;
   uint32_t nKeys = 0;
   uint32_t lkeys[kMaxNics] = {0};
   uint32_t rkeys[kMaxNics] = {0};
   int refCount = 0;
   bool reusable = true;
+};
+
+struct BarexMrKey {
+  uintptr_t base;
+  accl::barex::device_type dtype;
+
+  bool operator<(const BarexMrKey &other) const {
+    if (base != other.base)
+      return base < other.base;
+    return dtype < other.dtype;
+  }
 };
 
 struct BarexComm {
@@ -331,7 +341,7 @@ struct BarexEngine {
   std::mutex mu; /* guards the three maps below */
   std::unordered_map<uint64_t, PendingAccept> pendingAccepts;
   std::unordered_map<XChannel *, BarexComm *> channelComm;
-  std::map<uintptr_t, BarexMr *> mrByBase;
+  std::map<BarexMrKey, BarexMr *> mrs;
 
   std::mt19937_64 rng{std::random_device{}()};
 };
@@ -950,21 +960,6 @@ static flagcxResult_t barexRegMr(void *comm, void *data, size_t size, int type,
   FLAGCXCHECK(barexEngineStart(&e));
 
   const uintptr_t base = (uintptr_t)data;
-  {
-    std::lock_guard<std::mutex> lk(e->mu);
-    auto it = e->mrByBase.find(base);
-    if (it != e->mrByBase.end()) {
-      if (it->second->size != size) {
-        WARN("NET/BAREX : re-register %p with different size (%zu vs %zu)",
-             data, it->second->size, size);
-        return flagcxInvalidArgument;
-      }
-      it->second->refCount++;
-      *mhandle = it->second;
-      return flagcxSuccess;
-    }
-  }
-
   const accl::barex::device_type dtype =
       (type == FLAGCX_PTR_CUDA) ? accl::barex::GPU : accl::barex::CPU;
   int devId = 0;
@@ -1003,6 +998,35 @@ static flagcxResult_t barexRegMr(void *comm, void *data, size_t size, int type,
       return flagcxInvalidArgument;
     }
   }
+  /* DeregUserMr only identifies an MR by (base, dtype), so never publish two
+     physical registrations with the same key. */
+  const BarexMrKey key = {base, dtype};
+  std::unique_lock<std::mutex> lk(e->mu);
+  auto exact = e->mrs.find(key);
+  if (exact != e->mrs.end()) {
+    BarexMr *existing = exact->second;
+    if (existing->devId != devId || size > existing->size) {
+      WARN("NET/BAREX : incompatible duplicate MR for %p (%zu bytes, dev%d); "
+           "existing registration is %zu bytes on dev%d",
+           data, size, devId, existing->size, existing->devId);
+      return flagcxInvalidArgument;
+    }
+    existing->refCount++;
+    *mhandle = existing;
+    return flagcxSuccess;
+  }
+  for (const auto &entry : e->mrs) {
+    BarexMr *existing = entry.second;
+    if (existing->dtype != dtype || existing->devId != devId ||
+        base < existing->base)
+      continue;
+    const size_t offset = (size_t)(base - existing->base);
+    if (offset <= existing->size && size <= existing->size - offset) {
+      existing->refCount++;
+      *mhandle = existing;
+      return flagcxSuccess;
+    }
+  }
 
   auto *mr = new BarexMr();
   BarexResult r = e->mempool->RegUserMr(mr->mem, data, size, dtype, devId);
@@ -1018,7 +1042,6 @@ static flagcxResult_t barexRegMr(void *comm, void *data, size_t size, int type,
   mr->size = size;
   mr->dtype = dtype;
   mr->devId = devId;
-  mr->mrFlags = mrFlags;
   mr->refCount = 1;
   for (auto &kv : mr->mem.mrs) {
     const int nic = kv.first;
@@ -1034,7 +1057,8 @@ static flagcxResult_t barexRegMr(void *comm, void *data, size_t size, int type,
     delete mr;
     return flagcxInternalError;
   }
-  e->mrByBase[base] = mr;
+
+  e->mrs[key] = mr;
   *mhandle = mr;
   return flagcxSuccess;
 }
@@ -1054,19 +1078,19 @@ static flagcxResult_t barexDeregMr(void *comm, void *mhandle) {
   if (mr->refCount > 1) {
     mr->refCount--;
     return flagcxSuccess;
+  void *base = nullptr;
+  accl::barex::device_type dtype = accl::barex::CPU;
+  {
+    std::lock_guard<std::mutex> lk(e->mu);
+    if (--mr->refCount > 0)
+      return flagcxSuccess;
+    e->mrs.erase(BarexMrKey{mr->base, mr->dtype});
+    base = (void *)mr->base;
+    dtype = mr->dtype;
+    /* Keep registration and deregistration serialized. Otherwise a new
+       RegUserMr for this key could race before the old physical MR is gone. */
+    e->mempool->DeregUserMr(base, dtype);
   }
-  BarexResult result = e->mempool->DeregUserMr((void *)mr->base, mr->dtype);
-  if (result != accl::barex::BAREX_SUCCESS) {
-    /* A failed deregistration does not consume the handle, so a caller that
-       retains it can retry. Mark the entry non-reusable immediately: common
-       teardown paths may discard the handle, and future allocations must
-       never inherit keys from that stale physical registration. */
-    mr->reusable = false;
-    WARN("NET/BAREX : DeregUserMr(%p,%s) failed: %s", (void *)mr->base,
-         mr->dtype == accl::barex::GPU ? "GPU" : "CPU", bxstr(result));
-    return barexResult(result);
-  }
-  e->mrByBase.erase(it);
   delete mr;
   return flagcxSuccess;
 }

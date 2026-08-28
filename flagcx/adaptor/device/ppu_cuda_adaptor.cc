@@ -661,17 +661,12 @@ flagcxResult_t ppucudaAdaptorSymMulticastFree(void *mcHandle) {
 flagcxResult_t ppucudaAdaptorGetPointerType(const void *ptr, int *ptrType) {
   if (ptr == NULL || ptrType == NULL)
     return flagcxInvalidArgument;
-
-  cudaPointerAttributes attrs = {};
+  cudaPointerAttributes attrs;
   cudaError_t err = cudaPointerGetAttributes(&attrs, ptr);
-  if (err == cudaErrorInvalidValue) {
+  if (err != cudaSuccess) {
     cudaGetLastError();
     *ptrType = FLAGCX_PTR_HOST;
     return flagcxSuccess;
-  }
-  if (err != cudaSuccess) {
-    cudaGetLastError();
-    return flagcxUnhandledDeviceError;
   }
 #if CUDART_VERSION >= 10000
   *ptrType = (attrs.type == cudaMemoryTypeDevice ||
@@ -679,24 +674,9 @@ flagcxResult_t ppucudaAdaptorGetPointerType(const void *ptr, int *ptrType) {
                  ? FLAGCX_PTR_CUDA
                  : FLAGCX_PTR_HOST;
 #else
-  *ptrType = (attrs.memoryType == cudaMemoryTypeDevice || attrs.isManaged)
-                 ? FLAGCX_PTR_CUDA
-                 : FLAGCX_PTR_HOST;
+  *ptrType = attrs.memoryType == cudaMemoryTypeDevice ? FLAGCX_PTR_CUDA
+                                                      : FLAGCX_PTR_HOST;
 #endif
-  return flagcxSuccess;
-}
-
-flagcxResult_t ppucudaAdaptorGetAddressRange(const void *ptr, void **base,
-                                             size_t *size) {
-  if (ptr == NULL || base == NULL || size == NULL)
-    return flagcxInvalidArgument;
-
-  CUdeviceptr allocationBase = 0;
-  CUresult result =
-      cuMemGetAddressRange(&allocationBase, size, (CUdeviceptr)ptr);
-  if (result != CUDA_SUCCESS)
-    return flagcxUnhandledDeviceError;
-  *base = (void *)allocationBase;
   return flagcxSuccess;
 }
 
@@ -748,7 +728,7 @@ struct flagcxDeviceAdaptor ppucudaAdaptor {
       ppucudaAdaptorSymMulticastBind, ppucudaAdaptorSymMulticastTeardown,
       ppucudaAdaptorSymMulticastFree,
       NULL, // flagcxResult_t (*getLastError)();
-      ppucudaAdaptorGetPointerType, ppucudaAdaptorGetAddressRange,
+      ppucudaAdaptorGetPointerType,
 };
 
 #endif // USE_PPU_ADAPTOR
