@@ -1789,8 +1789,7 @@ flagcxResult_t flagcxIbRegMrDmaBuf(void *comm, void *data, size_t size,
   if (mhandle == NULL)
     return flagcxInvalidArgument;
   *mhandle = NULL;
-  if (comm == NULL || data == NULL || size == 0 ||
-      size > UINTPTR_MAX - (uintptr_t)data)
+  if (comm == NULL || data == NULL || size == 0)
     return flagcxInvalidArgument;
 
   struct flagcxIbNetCommBase *base = (struct flagcxIbNetCommBase *)comm;
@@ -1808,7 +1807,7 @@ flagcxResult_t flagcxIbRegMrDmaBuf(void *comm, void *data, size_t size,
         flagcxIbRegMrDmaBufInternal(devComm, data, size, type, offset, fd,
                                     mrFlags, mhandleWrapper->mrs + i);
     if (result != flagcxSuccess) {
-      for (int j = i - 1; j >= 0; j--) {
+      for (int j = i - 1; j >= 0; --j) {
         struct flagcxIbNetCommDevBase *registeredDev =
             flagcxIbGetNetCommDevBase(base, j);
         flagcxResult_t cleanupResult =
@@ -1816,19 +1815,9 @@ flagcxResult_t flagcxIbRegMrDmaBuf(void *comm, void *data, size_t size,
         if (cleanupResult != flagcxSuccess) {
           WARN("NET/IB: failed to roll back MR registration on device %d: %d",
                j, cleanupResult);
-        } else {
-          mhandleWrapper->mrs[j] = NULL;
         }
       }
-      bool cleanupDeferred = false;
-      for (int j = 0; j < i; j++)
-        cleanupDeferred |= mhandleWrapper->mrs[j] != NULL;
-      if (cleanupDeferred) {
-        mhandleWrapper->nextDeferred = base->deferredMrHandles;
-        base->deferredMrHandles = mhandleWrapper;
-      } else {
-        free(mhandleWrapper);
-      }
+      free(mhandleWrapper);
       return result;
     }
   }
@@ -1881,17 +1870,12 @@ returning:
   return res;
 }
 
-flagcxResult_t flagcxIbDeregMrWithCallback(void *comm, void *mhandle,
-                                           flagcxIbDeregMrCallback callback) {
-  if (mhandle == NULL)
-    return flagcxSuccess;
-  if (comm == NULL || callback == NULL)
+flagcxResult_t flagcxIbDeregMr(void *comm, void *mhandle) {
+  if (comm == NULL || mhandle == NULL)
     return flagcxInvalidArgument;
 
   struct flagcxIbMrHandle *mhandleWrapper = (struct flagcxIbMrHandle *)mhandle;
   struct flagcxIbNetCommBase *base = (struct flagcxIbNetCommBase *)comm;
-  if (base->ndevs <= 0 || base->ndevs > FLAGCX_IB_MAX_DEVS_PER_NIC)
-    return flagcxInternalError;
   flagcxResult_t result = flagcxSuccess;
   for (int i = 0; i < base->ndevs; i++) {
     if (mhandleWrapper->mrs[i] == NULL)
@@ -1899,78 +1883,14 @@ flagcxResult_t flagcxIbDeregMrWithCallback(void *comm, void *mhandle,
     // Each flagcxIbNetCommDevBase is at different offset in send and recv
     // netComms
     struct flagcxIbNetCommDevBase *devComm = flagcxIbGetNetCommDevBase(base, i);
-    flagcxResult_t current = callback(devComm, mhandleWrapper->mrs[i]);
-    if (current == flagcxSuccess) {
-      mhandleWrapper->mrs[i] = NULL;
-    } else if (result == flagcxSuccess) {
+    flagcxResult_t current =
+        flagcxIbDeregMrInternal(devComm, mhandleWrapper->mrs[i]);
+    if (result == flagcxSuccess && current != flagcxSuccess)
       result = current;
-    }
+    mhandleWrapper->mrs[i] = NULL;
   }
-  // Retain a partially cleaned wrapper so callers can retry the failed NICs.
-  if (result == flagcxSuccess)
-    free(mhandleWrapper);
+  free(mhandleWrapper);
   return result;
-}
-
-static void flagcxIbRemoveDeferredMr(struct flagcxIbNetCommBase *base,
-                                     struct flagcxIbMrHandle *handle) {
-  struct flagcxIbMrHandle **current = &base->deferredMrHandles;
-  while (*current != NULL) {
-    if (*current == handle) {
-      *current = handle->nextDeferred;
-      handle->nextDeferred = NULL;
-      return;
-    }
-    current = &(*current)->nextDeferred;
-  }
-}
-
-flagcxResult_t
-flagcxIbDeregMrOrDeferWithCallback(struct flagcxIbNetCommBase *base,
-                                   void *mhandle,
-                                   flagcxIbDeregMrCallback callback) {
-  if (mhandle == NULL)
-    return flagcxSuccess;
-  if (base == NULL || callback == NULL)
-    return flagcxInvalidArgument;
-
-  // A caller that observes an error may retry the same handle. Remove any
-  // prior deferred entry before doing so, then put the still-live wrapper back
-  // on the comm-owned list if a NIC remains registered. Callers that ignore a
-  // cleanup error therefore cannot orphan the handle; closeSend/closeRecv will
-  // make one final attempt before destroying the PD.
-  struct flagcxIbMrHandle *handle = (struct flagcxIbMrHandle *)mhandle;
-  flagcxIbRemoveDeferredMr(base, handle);
-  flagcxResult_t result = flagcxIbDeregMrWithCallback(base, handle, callback);
-  if (result != flagcxSuccess) {
-    handle->nextDeferred = base->deferredMrHandles;
-    base->deferredMrHandles = handle;
-  }
-  return result;
-}
-
-flagcxResult_t flagcxIbDeregMr(void *comm, void *mhandle) {
-  return flagcxIbDeregMrOrDeferWithCallback((struct flagcxIbNetCommBase *)comm,
-                                            mhandle, flagcxIbDeregMrInternal);
-}
-
-flagcxResult_t
-flagcxIbDrainDeferredMrsWithCallback(struct flagcxIbNetCommBase *base,
-                                     flagcxIbDeregMrCallback callback) {
-  if (base == NULL || callback == NULL)
-    return flagcxInvalidArgument;
-  while (base->deferredMrHandles != NULL) {
-    struct flagcxIbMrHandle *handle = base->deferredMrHandles;
-    base->deferredMrHandles = handle->nextDeferred;
-    handle->nextDeferred = NULL;
-    flagcxResult_t result = flagcxIbDeregMrWithCallback(base, handle, callback);
-    if (result != flagcxSuccess) {
-      handle->nextDeferred = base->deferredMrHandles;
-      base->deferredMrHandles = handle;
-      return result;
-    }
-  }
-  return flagcxSuccess;
 }
 
 static flagcxResult_t flagcxIbGetMrInfo(void *mhandle,
