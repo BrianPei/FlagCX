@@ -1304,6 +1304,10 @@ flagcxResult_t flagcxIbAccept(void *listenComm, void **recvComm) {
   *recvComm = NULL;
   // Pre-declare variables because of goto
   struct ibv_srq *srq = NULL;
+  bool deviceDmaBufSupported = false;
+  bool gdrSupported = false;
+  bool dmaBufSupported = false;
+  flagcxResult_t dmaSupportResult = flagcxSuccess;
 
   if (stage->state == flagcxIbCommStateAccept)
     goto ib_accept_check;
@@ -1460,7 +1464,16 @@ ib_recv:
     FLAGCXCHECK(flagcxIbRtsQp(qp->qp));
   }
 
-  rComm->flushEnabled = 1;
+  if (deviceAdaptor != NULL && deviceAdaptor->dmaSupport != NULL) {
+    dmaSupportResult = deviceAdaptor->dmaSupport(&deviceDmaBufSupported);
+    if (dmaSupportResult != flagcxSuccess)
+      deviceDmaBufSupported = false;
+  }
+  gdrSupported = flagcxIbGdrSupport() == flagcxSuccess;
+  dmaBufSupported = deviceDmaBufSupported &&
+                    flagcxIbDmaBufSupport(lComm->dev) == flagcxSuccess;
+  rComm->flushEnabled =
+      (gdrSupported || dmaBufSupported) && flagcxParamIbGdrFlushDisable() == 0;
 
   for (int i = 0; i < mergedDev->ndevs; i++) {
     rCommDev = rComm->devs + i;

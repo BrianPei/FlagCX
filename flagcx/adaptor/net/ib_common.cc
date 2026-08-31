@@ -155,8 +155,13 @@ flagcxIbCommonRecordUnsignaledCompletion(struct flagcxIbNetCommBase *base,
 flagcxResult_t
 flagcxIbCommonTestDataQp(struct flagcxIbRequest *r, int *done, int *sizes,
                          const struct flagcxIbCommonTestOps *ops) {
-  if (!r || !done)
+  if (!done)
     return flagcxInternalError;
+
+  if (!r) {
+    *done = 1;
+    return flagcxSuccess;
+  }
 
   if (ops && ops->pre_check) {
     FLAGCXCHECK(ops->pre_check(r));
