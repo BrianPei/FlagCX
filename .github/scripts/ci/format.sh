@@ -1,20 +1,16 @@
-#!/usr/bin/env bash
-
-# Copyright (c) 2026 BAAI. All rights reserved.
+# Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # See LICENSE for license information.
 
-# Run the repository's pre-commit hooks locally.
+# Utility file to run pre-commit hooks locally.
 # Usage: bash .github/scripts/ci/format.sh
 
-set -euo pipefail
+set -e
 
-FLAGCX_PATH=${FLAGCX_PATH:-${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}}
+: "${TE_PATH:=.}"
 
-cd "$FLAGCX_PATH"
+cd "$TE_PATH"
 
-# clang-format comes from the hook environment pinned in .pre-commit-config.yaml,
-# so pre-commit provisions the version the repository is formatted with; whatever
-# clang-format happens to be on PATH is neither used nor required.
-python3 -m pip install pre-commit
+pip3 install pre-commit clang-format==14.0.6
+clang-format --version
 python3 -m pre_commit run --all-files

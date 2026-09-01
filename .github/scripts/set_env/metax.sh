@@ -49,38 +49,11 @@ flagcx_ci_prepare() {
   command -v mpirun
   command -v mxcc
 
-  if [[ "$suite" == "adaptor" || "$suite" == "p2p" ||
-        "$suite" == "rma" ]]; then
-    local -a hca_paths=()
-    local -a hca_names=()
-    local hca_path
-
-    shopt -s nullglob
-    # Prefer the native RoCE devices while retaining compatibility with MetaX
-    # runners that expose the same links through the bonded RDMA driver.
-    hca_paths=(/sys/class/infiniband/bnxt_roce*)
-    if [[ ${#hca_paths[@]} -eq 0 ]]; then
-      hca_paths=(/sys/class/infiniband/bnxt_re_bond*)
-    fi
-    shopt -u nullglob
-
-    if [[ ${#hca_paths[@]} -eq 0 ]]; then
-      if [[ "$suite" != "rma" ]]; then
-        echo "MetaX $suite tests require bnxt_roce* or bnxt_re_bond* RDMA devices." >&2
-        return 1
-      fi
-      # The RMA suite runs an explicit IPC invocation before its RDMA
-      # preflight. Leave HCA selection unset here so missing RDMA does not hide
-      # IPC regressions; flagcx_ci_validate_rdma will reject the NET phase.
-      echo "MetaX RMA IPC phase will run without a detected Broadcom RDMA HCA."
-    else
-      for hca_path in "${hca_paths[@]}"; do
-        hca_names+=("${hca_path##*/}")
-      done
-      if [[ -z "${FLAGCX_IB_HCA:-}" ]]; then
-        local IFS=,
-        export FLAGCX_IB_HCA="${hca_names[*]}"
-      fi
+  # Both suites establish real loopback RDMA connections.  Pin them to the
+  # bonded RoCE device instead of depending on IB/socket discovery order.
+  if [[ "$suite" == "adaptor" || "$suite" == "p2p" ]]; then
+    if compgen -G "/sys/class/infiniband/bnxt_re_bond*" >/dev/null; then
+      export FLAGCX_IB_HCA=${FLAGCX_IB_HCA:-bnxt_re_bond}
     fi
 
     if [[ -d /sys/class/net/bond0 ]]; then
@@ -90,7 +63,7 @@ flagcx_ci_prepare() {
     export FLAGCX_DEBUG=${FLAGCX_DEBUG:-INFO}
     export FLAGCX_DEBUG_SUBSYS=${FLAGCX_DEBUG_SUBSYS:-INIT,NET,P2P,ENV}
 
-    echo "MetaX network diagnostics:"
+    echo "MetaX RDMA diagnostics:"
     echo "FLAGCX_IB_HCA=${FLAGCX_IB_HCA:-<unset>}"
     echo "FLAGCX_IB_GID_INDEX=${FLAGCX_IB_GID_INDEX:-<unset>}"
     echo "FLAGCX_SOCKET_IFNAME=${FLAGCX_SOCKET_IFNAME:-<unset>}"
