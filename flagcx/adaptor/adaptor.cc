@@ -184,7 +184,6 @@ extern struct flagcxNetAdaptor flagcxNetUcx;
 #ifdef USE_ACCL_BAREX
 extern struct flagcxNetAdaptor flagcxNetBarex;
 #endif
-extern struct flagcxNetAdaptor flagcxNetIbP2p;
 
 // Build-selected network adaptor entry point
 struct flagcxNetAdaptor *getNetAdaptor(int netType) {
@@ -198,7 +197,7 @@ struct flagcxNetAdaptor *getNetAdaptor(int netType) {
       return &flagcxNetIbuc;
 #elif USE_ACCL_BAREX
       // BAREX is the build-selected RDMA-class adaptor on PPU/vSolar hosts;
-      // FLAGCX_IB_DISABLE=1 disables the RDMA class.
+      // FLAGCX_BAREX_DISABLE=1 falls back to socket at runtime.
       return &flagcxNetBarex;
 #else
       return &flagcxNetIb;

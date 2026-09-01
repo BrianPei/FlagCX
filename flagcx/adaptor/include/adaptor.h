@@ -71,12 +71,8 @@ enum NetType {
 #endif
 };
 
-// Build-selected network adaptor function declaration
+// Build-selected network adaptor function declarations
 struct flagcxNetAdaptor *getNetAdaptor(int netType);
-
-/* Compatibility name retained for existing deployments.  The setting
- * disables the build-selected RDMA-class adaptor, not only the IBRC backend. */
-int64_t flagcxParamIbDisable(void);
 
 inline bool flagcxCCLAdaptorNeedSendrecv(size_t value) { return value != 0; }
 

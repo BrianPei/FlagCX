@@ -715,7 +715,7 @@ proxyProgressAsync(struct flagcxProxyLocalPeer *peer, flagcxProxyAsyncOp *op,
           if (dmaBufferSupport &&
               deviceAdaptor->getHandleForAddressRange != NULL &&
               resources->netAdaptor->regMrDmaBuf != NULL &&
-              resources->netAdaptor == getUnifiedNetAdaptor(IBRC)) {
+              resources->netAdaptor == getNetAdaptor(RDMA)) {
             INFO(FLAGCX_PROXY,
                  "Registering memory region with DMA-BUF support");
             int dmabuf_fd;

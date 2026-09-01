@@ -2641,56 +2641,17 @@ flagcxResult_t flagcxIbGetProperties(int dev, void *props) {
 }
 
 static flagcxResult_t
-flagcxIbGetOneSidedKey(const struct flagcxOneSideHandleInfo *info, int rank,
-                       uint64_t offset, size_t size, int keyIndex,
-                       bool localKey, uint32_t *key) {
-  if (info == NULL || key == NULL || info->baseVas == NULL ||
-      info->regionSizes == NULL || info->mrInfos == NULL || rank < 0 ||
-      rank >= info->nRanks || keyIndex < 0)
+flagcxIbValidateOneSidedRegion(const struct flagcxOneSideHandleInfo *info,
+                               int rank, uint64_t offset, size_t size,
+                               bool useLocalKey) {
+  if (info == NULL || info->baseVas == NULL || info->regionSizes == NULL ||
+      (useLocalKey ? info->lkeys == NULL : info->rkeys == NULL) || rank < 0 ||
+      rank >= info->nRanks)
     return flagcxInvalidArgument;
 
   const size_t regionSize = info->regionSizes[rank];
-  if (size > UINT32_MAX || offset > regionSize || size > regionSize - offset ||
-      offset > UINTPTR_MAX - info->baseVas[rank] ||
-      size > UINTPTR_MAX - info->baseVas[rank] - offset)
+  if (size > UINT32_MAX || offset > regionSize || size > regionSize - offset)
     return flagcxInvalidArgument;
-
-  const struct flagcxNetMrInfo *mrInfo = &info->mrInfos[rank];
-  if ((uint32_t)keyIndex >= mrInfo->nKeys ||
-      mrInfo->nKeys > FLAGCX_NET_MAX_MR_KEYS)
-    return flagcxInvalidArgument;
-  *key = localKey ? mrInfo->lkeys[keyIndex] : mrInfo->rkeys[keyIndex];
-  return flagcxSuccess;
-}
-
-static flagcxResult_t flagcxIbSelectOneSidedQp(struct flagcxIbSendComm *comm,
-                                               struct flagcxIbQp **qp) {
-  if (comm == NULL || qp == NULL || comm->base.ready == 0 ||
-      comm->base.nqps <= 0)
-    return flagcxInvalidArgument;
-
-  // The current one-sided API has no ordering-domain or QP-selection input.
-  // Keep legacy RMA operations on one RC QP so a later signal cannot overtake
-  // a preceding write. Explicit multi-QP scheduling belongs in the transport
-  // layer, where the caller can also express the required ordering boundary.
-  *qp = &comm->base.qps[0];
-  return flagcxSuccess;
-}
-
-static flagcxResult_t
-flagcxIbInitOneSidedRequest(struct flagcxIbSendComm *comm, int type,
-                            struct flagcxIbRequest **request) {
-  if (comm == NULL || request == NULL)
-    return flagcxInvalidArgument;
-  *request = NULL;
-  flagcxResult_t result = flagcxIbGetRequest(&comm->base, request);
-  if (result == flagcxInternalError)
-    return flagcxInProgress;
-  FLAGCXCHECK(result);
-  (*request)->type = type;
-  (*request)->sock = &comm->base.sock;
-  for (int i = 0; i < comm->base.ndevs; i++)
-    (*request)->devBases[i] = &comm->devs[i].base;
   return flagcxSuccess;
 }
 
@@ -2706,6 +2667,12 @@ flagcxResult_t flagcxIbIput(void *sendComm, uint64_t srcOff, uint64_t dstOff,
       (struct flagcxOneSideHandleInfo *)srcHandles;
   struct flagcxOneSideHandleInfo *dstInfo =
       (struct flagcxOneSideHandleInfo *)dstHandles;
+  if (comm == NULL)
+    return flagcxInvalidArgument;
+  FLAGCXCHECK(
+      flagcxIbValidateOneSidedRegion(srcInfo, srcRank, srcOff, size, true));
+  FLAGCXCHECK(
+      flagcxIbValidateOneSidedRegion(dstInfo, dstRank, dstOff, size, false));
 
   struct flagcxIbQp *qp = NULL;
   FLAGCXCHECK(flagcxIbSelectOneSidedQp(comm, &qp));
@@ -2719,6 +2686,10 @@ flagcxResult_t flagcxIbIput(void *sendComm, uint64_t srcOff, uint64_t dstOff,
   void *dstPtr = (void *)(dstInfo->baseVas[dstRank] + dstOff);
   struct flagcxIbRequest *req = NULL;
   FLAGCXCHECK(flagcxIbInitOneSidedRequest(comm, FLAGCX_NET_IB_REQ_IPUT, &req));
+  if (size == 0) {
+    *request = req;
+    return flagcxSuccess;
+  }
   if (size == 0) {
     *request = req;
     return flagcxSuccess;
@@ -2765,8 +2736,6 @@ flagcxResult_t flagcxIbIputBatch(void *sendComm, int count,
   *posted = 0;
   if (count < 0 || count > MAX_REQUESTS)
     return flagcxInvalidArgument;
-  if (count > 0 && requests == NULL)
-    return flagcxInvalidArgument;
   for (int i = 0; i < count; i++)
     requests[i] = NULL;
   if (count == 0)
@@ -2780,6 +2749,14 @@ flagcxResult_t flagcxIbIputBatch(void *sendComm, int count,
   if (comm == NULL || srcInfo == NULL || dstInfo == NULL || srcOffs == NULL ||
       dstOffs == NULL || sizes == NULL) {
     return flagcxInvalidArgument;
+  }
+  for (int i = 0; i < count; i++) {
+    FLAGCXCHECK(flagcxIbValidateOneSidedRegion(srcInfo, srcRank, srcOffs[i],
+                                               sizes[i], true));
+    FLAGCXCHECK(flagcxIbValidateOneSidedRegion(dstInfo, dstRank, dstOffs[i],
+                                               sizes[i], false));
+    if (sizes[i] > UINT32_MAX)
+      return flagcxInvalidArgument;
   }
 
   struct flagcxIbQp *qp = NULL;
@@ -2907,6 +2884,12 @@ flagcxResult_t flagcxIbIget(void *sendComm, uint64_t srcOff, uint64_t dstOff,
       (struct flagcxOneSideHandleInfo *)srcHandles;
   struct flagcxOneSideHandleInfo *dstInfo =
       (struct flagcxOneSideHandleInfo *)dstHandles;
+  if (comm == NULL)
+    return flagcxInvalidArgument;
+  FLAGCXCHECK(
+      flagcxIbValidateOneSidedRegion(srcInfo, srcRank, srcOff, size, false));
+  FLAGCXCHECK(
+      flagcxIbValidateOneSidedRegion(dstInfo, dstRank, dstOff, size, true));
 
   struct flagcxIbQp *qp = NULL;
   FLAGCXCHECK(flagcxIbSelectOneSidedQp(comm, &qp));
@@ -2922,6 +2905,10 @@ flagcxResult_t flagcxIbIget(void *sendComm, uint64_t srcOff, uint64_t dstOff,
   void *dstPtr = (void *)(dstInfo->baseVas[dstRank] + dstOff);
   struct flagcxIbRequest *req = NULL;
   FLAGCXCHECK(flagcxIbInitOneSidedRequest(comm, FLAGCX_NET_IB_REQ_IGET, &req));
+  if (size == 0) {
+    *request = req;
+    return flagcxSuccess;
+  }
   if (size == 0) {
     *request = req;
     return flagcxSuccess;
@@ -3048,24 +3035,16 @@ flagcxResult_t flagcxIbIputSignal(void *sendComm, uint64_t srcOff,
       (struct flagcxOneSideHandleInfo *)dstHandles;
   struct flagcxOneSideHandleInfo *signalInfo =
       (struct flagcxOneSideHandleInfo *)signalHandles;
-  struct flagcxIbQp *qp = NULL;
-  FLAGCXCHECK(flagcxIbSelectOneSidedQp(comm, &qp));
-  int devIndex = qp->devIndex;
-  uint32_t signalRkey = 0;
-  if ((signalOff & (sizeof(uint64_t) - 1)) != 0)
+  if (comm == NULL)
     return flagcxInvalidArgument;
-  FLAGCXCHECK(flagcxIbGetOneSidedKey(signalInfo, dstRank, signalOff,
-                                     sizeof(uint64_t), qp->remDevIdx, false,
-                                     &signalRkey));
-
-  uint32_t dataLkey = 0;
-  uint32_t dataRkey = 0;
   if (size > 0) {
-    FLAGCXCHECK(flagcxIbGetOneSidedKey(srcInfo, srcRank, srcOff, size,
-                                       qp->devIndex, true, &dataLkey));
-    FLAGCXCHECK(flagcxIbGetOneSidedKey(dstInfo, dstRank, dstOff, size,
-                                       qp->remDevIdx, false, &dataRkey));
+    FLAGCXCHECK(
+        flagcxIbValidateOneSidedRegion(srcInfo, srcRank, srcOff, size, true));
+    FLAGCXCHECK(
+        flagcxIbValidateOneSidedRegion(dstInfo, dstRank, dstOff, size, false));
   }
+  FLAGCXCHECK(flagcxIbValidateOneSidedRegion(signalInfo, dstRank, signalOff,
+                                             sizeof(uint64_t), false));
 
   struct flagcxIbRequest *req = NULL;
   FLAGCXCHECK(flagcxIbInitOneSidedRequest(comm, FLAGCX_NET_IB_REQ_IPUT, &req));
