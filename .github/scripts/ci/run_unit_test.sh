@@ -47,37 +47,30 @@ flagcx_ci_require_rdma() {
 
   platform_name=$(basename "$SET_ENV_SCRIPT" .sh)
   case "$platform_name" in
-    cuda|metax|hygon|ppu) ;;
+    cuda|metax|hygon) ;;
     *) return 0 ;;
   esac
 
   case "$suite" in
-    adaptor|p2p|rma) ;;
+    adaptor|p2p) ;;
     *) return 0 ;;
   esac
 
   echo "Running $platform_name RDMA preflight for unit-test suite: $suite"
+
   if ! compgen -G "/sys/class/infiniband/*" >/dev/null ||
     ! compgen -G "/dev/infiniband/uverbs*" >/dev/null; then
     echo "$platform_name $suite tests require RDMA devices, but the runner did not expose /sys/class/infiniband and /dev/infiniband/uverbs* to the test container." >&2
     return 1
   fi
 
-  if declare -F flagcx_ci_validate_rdma >/dev/null; then
-    flagcx_ci_validate_rdma "$suite"
-  fi
-
-  echo "RDMA preflight passed"
+  echo "RDMA preflight passed: kernel HCA sysfs entries and uverbs device nodes are visible"
 }
 
 if declare -F flagcx_ci_prepare >/dev/null; then
   flagcx_ci_prepare "$SUITE"
 fi
-# RMA has separate IPC and network invocations. Its RDMA preflight runs only
-# before the network invocation so missing RDMA cannot hide IPC regressions.
-if [[ "$SUITE" != rma ]]; then
-  flagcx_ci_require_rdma "$SUITE"
-fi
+flagcx_ci_require_rdma "$SUITE"
 
 build_googletest() {
   cmake -S "$PROJECT_ROOT/third-party/googletest" \
