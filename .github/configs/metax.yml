@@ -10,20 +10,18 @@ runner_labels:
 docker_volumes:
   - /opt/mxdriver:/opt/mxdriver:ro
 
-container_options: >-
-  --network=host
-  --hostname=te-cicd
-  --ipc=host
-  --privileged=true
-  --shm-size=100gb
-  --ulimit memlock=-1
-  --user root
-  --ulimit nofile=65535:65535
-  --group-add video
-  -e PLATFORM=metax
-  -e TORCH_DISTRIBUTED_BACKEND=mccl
-  -e FLAGCX_IB_GID_INDEX=3
-  -e LD_LIBRARY_PATH=/opt/mxdriver/lib:/opt/maca/lib:/usr/local/lib:$LD_LIBRARY_PATH
+docker_options:
+  - --network=host
+  - --hostname=te-cicd
+  - --ipc=host
+  - --privileged=true
+  - --shm-size=100gb
+  - --ulimit=memlock=-1
+  - --ulimit=nofile=65535:65535
+  - --group-add=video
+  - --env=PLATFORM=metax
+  - --env=TORCH_DISTRIBUTED_BACKEND=mccl
+  - --env=FLAGCX_IB_GID_INDEX=3
 
 set_env: .github/scripts/set_env/metax.sh
 

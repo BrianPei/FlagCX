@@ -18,18 +18,19 @@ docker_volumes:
   # the HCA from inside the explicitly managed CI container.
   - /var/log/shca:/var/log/shca
 
-container_options: >-
-  --network host
-  --ipc=host
-  --privileged=true
-  --shm-size=100gb
-  --ulimit memlock=-1
-  --ulimit stack=67108864
-  --device=/dev/kfd
-  --device=/dev/dri
-  --group-add video
-  -e PLATFORM=hygon
-  -e FLAGCX_ADAPTOR=du
+docker_options:
+  - --network=host
+  - --ipc=host
+  - --privileged=true
+  - --shm-size=100gb
+  - --ulimit=memlock=-1
+  - --ulimit=stack=67108864
+  - --device=/dev/kfd
+  - --device=/dev/dri
+  - --group-add=video
+  - --env=PLATFORM=hygon
+  - --env=FLAGCX_ADAPTOR=du
+
 set_env: .github/scripts/set_env/hygon.sh
 
 unit_test_suites:

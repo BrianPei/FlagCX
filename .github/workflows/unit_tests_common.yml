@@ -42,6 +42,9 @@ jobs:
       matrix:
         suite: ${{ fromJSON(needs.load_config.outputs.unit_test_suites) }}
     runs-on: ${{ fromJSON(needs.load_config.outputs.runs_on) }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -53,11 +56,9 @@ jobs:
           set-safe-directory: true
 
       - name: Check Docker
-        shell: bash
         run: docker version
 
       - name: Run unit-test suite in container
-        shell: bash
         env:
           FLAGCX_CI_CONTAINER_NAME: flagcx-unit-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.platform }}-${{ matrix.suite }}
           FLAGCX_CI_DOCKER_ARGS: ${{ needs.load_config.outputs.docker_args }}
@@ -107,9 +108,8 @@ jobs:
                 "$FLAGCX_CI_SET_ENV" "$FLAGCX_CI_SUITE"
             '
 
-      - name: Cleanup unit-test container
-        if: always()
-        shell: bash
+      - name: Clean up unit-test container
+        if: ${{ always() }}
         env:
           FLAGCX_CI_CONTAINER_NAME: flagcx-unit-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.platform }}-${{ matrix.suite }}
         run: docker rm --force "$FLAGCX_CI_CONTAINER_NAME" >/dev/null 2>&1 || true
