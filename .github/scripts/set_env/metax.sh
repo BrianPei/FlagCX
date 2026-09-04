@@ -34,11 +34,6 @@ flagcx_ci_configure_suite() {
       export FLAGCX_DEBUG=TRACE
       export FLAGCX_DEBUG_SUBSYS=ALL
       ;;
-    rma)
-      FLAGCX_CI_TEST_MAKE_ARGS+=(
-        "RMA_PLATFORM_ENV=-x FLAGCX_USE_TUNER=1 -x TUNNING_WITH_SINGLE_COMM=1 -x FLAGCX_USE_HOST_COMM=1 -x FLAGCX_P2P_DISABLE=1"
-      )
-      ;;
   esac
 }
 
@@ -86,57 +81,4 @@ flagcx_ci_prepare() {
   ibv_devices 2>/dev/null || true
   ibv_devinfo 2>/dev/null || true
   ip -o addr show 2>/dev/null || true
-}
-
-flagcx_ci_validate_rdma() {
-  local suite=$1
-
-  if ! compgen -G "/sys/class/infiniband/bnxt_roce*" >/dev/null &&
-    ! compgen -G "/sys/class/infiniband/bnxt_re_bond*" >/dev/null; then
-    echo "MetaX $suite tests require bnxt_roce* or bnxt_re_bond* RDMA devices." >&2
-    return 1
-  fi
-}
-
-flagcx_ci_build_suite_override() {
-  local suite=$1
-  local suite_dir=$2
-  shift 2
-  local -a args=("$@")
-
-  if [[ "$suite" == "symmem" ]]; then
-    FLAGCX_CI_BUILD_SUITE_OVERRIDE_HANDLED=1
-    cmake -S "$PROJECT_ROOT/third-party/googletest" \
-      -B "$PROJECT_ROOT/third-party/googletest/build"
-    cmake --build "$PROJECT_ROOT/third-party/googletest/build" --parallel "$(nproc)"
-    make -C "$suite_dir" --jobs="$(nproc)" "${args[@]}"
-    return
-  fi
-
-  FLAGCX_CI_BUILD_SUITE_OVERRIDE_HANDLED=0
-}
-
-flagcx_ci_run_suite_override() {
-  local suite=$1
-  local suite_dir=$2
-  shift 2
-  local -a args=("$@")
-
-  if [[ "$suite" == "runner" ]]; then
-    FLAGCX_CI_RUN_SUITE_OVERRIDE_HANDLED=1
-    FLAGCX_CI_TEST_LABEL="runner unit tests" \
-      "$TEST_RUNNER" make -C "$suite_dir" run-unit "${args[@]}"
-    echo "Skipping MetaX runner MPI tests: mcclAllGather segfaults in the current MCCL backend."
-    return
-  fi
-
-  if [[ "$suite" == "symmem" ]]; then
-    FLAGCX_CI_RUN_SUITE_OVERRIDE_HANDLED=1
-    FLAGCX_CI_TEST_LABEL="symmem unit tests" \
-      "$TEST_RUNNER" "$suite_dir/build/bin/symmem_unit_tests"
-    echo "Skipping MetaX symmem MPI tests: symmetric windows are not supported by the current MetaX backend."
-    return
-  fi
-
-  FLAGCX_CI_RUN_SUITE_OVERRIDE_HANDLED=0
 }
