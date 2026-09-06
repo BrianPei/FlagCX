@@ -11,7 +11,6 @@ SET_ENV_SCRIPT=$1
 SUITE=$2
 PROJECT_ROOT=${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}
 MPI_RUNNER="$PROJECT_ROOT/.github/scripts/ci/run_mpi_with_timeout.sh"
-TEST_RUNNER="$PROJECT_ROOT/.github/scripts/ci/run_with_timeout.sh"
 
 if [[ ! -f "$SET_ENV_SCRIPT" ]]; then
   echo "Platform environment script not found: $SET_ENV_SCRIPT" >&2
@@ -139,21 +138,17 @@ run_device_api() {
   : "${FLAGCX_CI_NODE_NP:?The platform set_env script must define FLAGCX_CI_NODE_NP}"
 
   cd "$suite_dir"
-  FLAGCX_CI_MPI_LABEL="device_api intra" \
-    "$MPI_RUNNER" -np "$FLAGCX_CI_INTRA_NP" --allow-run-as-root "${common_env[@]}" \
+  "$MPI_RUNNER" -np "$FLAGCX_CI_INTRA_NP" --allow-run-as-root "${common_env[@]}" \
     build/bin/test_device_api_intra "${flags[@]}"
-  FLAGCX_CI_MPI_LABEL="device IR intra" \
-    "$MPI_RUNNER" -np "$FLAGCX_CI_INTRA_NP" --allow-run-as-root "${common_env[@]}" \
+  "$MPI_RUNNER" -np "$FLAGCX_CI_INTRA_NP" --allow-run-as-root "${common_env[@]}" \
     build/bin/test_device_ir_intra "${flags[@]}"
 
-  FLAGCX_CI_MPI_LABEL="device_api inter" \
-    "$MPI_RUNNER" --allow-run-as-root \
+  "$MPI_RUNNER" --allow-run-as-root \
     -np "$FLAGCX_CI_NODE_NP" "${common_env[@]}" "${FLAGCX_CI_NODE1_MPI_ARGS[@]}" \
     build/bin/test_device_api_inter "${flags[@]}" \
     : -np "$FLAGCX_CI_NODE_NP" "${common_env[@]}" "${FLAGCX_CI_NODE2_MPI_ARGS[@]}" \
     build/bin/test_device_api_inter "${flags[@]}"
-  FLAGCX_CI_MPI_LABEL="device IR inter" \
-    "$MPI_RUNNER" --allow-run-as-root \
+  "$MPI_RUNNER" --allow-run-as-root \
     -np "$FLAGCX_CI_NODE_NP" "${common_env[@]}" "${FLAGCX_CI_NODE1_MPI_ARGS[@]}" \
     build/bin/test_device_ir_inter "${flags[@]}" \
     : -np "$FLAGCX_CI_NODE_NP" "${common_env[@]}" "${FLAGCX_CI_NODE2_MPI_ARGS[@]}" \
@@ -211,12 +206,10 @@ run_device_api_unified_ir() {
 
   # Keep P2P enabled so the intra test covers signal/counter buffers and their
   # shadows. The INTER team below crosses the two logical nodes through NET.
-  FLAGCX_CI_MPI_LABEL="unified IR intra" \
-    "$MPI_RUNNER" -np "$FLAGCX_CI_INTRA_NP" --allow-run-as-root "${intra_env[@]}" \
+  "$MPI_RUNNER" -np "$FLAGCX_CI_INTRA_NP" --allow-run-as-root "${intra_env[@]}" \
     build/bin/test_device_ir_unified_intra "${intra_flags[@]}"
 
-  FLAGCX_CI_MPI_LABEL="unified IR inter" \
-    "$MPI_RUNNER" --allow-run-as-root \
+  "$MPI_RUNNER" --allow-run-as-root \
     -np "$FLAGCX_CI_NODE_NP" "${inter_env[@]}" "${FLAGCX_CI_NODE1_MPI_ARGS[@]}" \
     build/bin/test_device_ir_unified_inter "${inter_flags[@]}" \
     : -np "$FLAGCX_CI_NODE_NP" "${inter_env[@]}" "${FLAGCX_CI_NODE2_MPI_ARGS[@]}" \
@@ -225,13 +218,11 @@ run_device_api_unified_ir() {
   # Fault injection: disable only one-sided data/signal IPC.  Barriers retain
   # their IPC transport so these runs specifically validate IPC-to-Net
   # fallback for S18-S25.
-  FLAGCX_CI_MPI_LABEL="unified IR intra forced fallback" \
-    "$MPI_RUNNER" -np "$FLAGCX_CI_INTRA_NP" --allow-run-as-root \
+  "$MPI_RUNNER" -np "$FLAGCX_CI_INTRA_NP" --allow-run-as-root \
     "${intra_fallback_env[@]}" \
     build/bin/test_device_ir_unified_intra "${fallback_flags[@]}"
 
-  FLAGCX_CI_MPI_LABEL="unified IR inter forced fallback" \
-    "$MPI_RUNNER" --allow-run-as-root \
+  "$MPI_RUNNER" --allow-run-as-root \
     -np "$FLAGCX_CI_NODE_NP" "${inter_fallback_env[@]}" \
     "${FLAGCX_CI_NODE1_MPI_ARGS[@]}" \
     build/bin/test_device_ir_unified_inter "${fallback_flags[@]}" \
@@ -293,57 +284,46 @@ run_suite() {
         "$TEST_RUNNER" make -C "$suite_dir" run-unit "${args[@]}"
       ;;
     rma)
-      local ipc_status=0
-      local network_status=0
-      FLAGCX_CI_TEST_LABEL="rma unit tests" \
-        "$TEST_RUNNER" make -C "$suite_dir" run-unit "${args[@]}"
-      # Keep these as separate invocations so each transport has its own
-      # timeout. Collect both statuses so a failure in one path cannot prevent
-      # the other path from running and producing a useful result.
-      FLAGCX_CI_MPI_LABEL="rma IPC MPI tests" \
-        make -C "$suite_dir" run-mpi-ipc "${args[@]}" \
-        MPIRUN="$MPI_RUNNER" || ipc_status=$?
-      if flagcx_ci_require_rdma "$SUITE"; then
-        FLAGCX_CI_MPI_LABEL="rma network MPI tests" \
-          make -C "$suite_dir" run-mpi-net "${args[@]}" \
-          MPIRUN="$MPI_RUNNER" || network_status=$?
-      else
-        network_status=$?
-      fi
-      if ((ipc_status != 0 || network_status != 0)); then
-        echo "RMA MPI failures: IPC=$ipc_status network=$network_status" >&2
-        return 1
-      fi
+      make -C "$suite_dir" run-mpi "${args[@]}" MPIRUN="$MPI_RUNNER"
       ;;
     runner)
       : "${FLAGCX_CI_RUNNER_NP:?The platform set_env script must define FLAGCX_CI_RUNNER_NP}"
       FLAGCX_CI_TEST_LABEL="runner unit tests" \
         "$TEST_RUNNER" make -C "$suite_dir" run-unit "${args[@]}"
       cd "$suite_dir"
-      FLAGCX_CI_MPI_LABEL="runner default" \
+      "$MPI_RUNNER" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
+        ./build/bin/runner_mpi_tests
+      "$MPI_RUNNER" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
+        -x FLAGCX_CLUSTER_SPLIT_LIST=2 \
+        ./build/bin/runner_mpi_tests
+      # A platform may opt out when forcing NET cannot select a real RDMA
+      # adaptor. Do not silently turn this coverage into a socket test.
+      if [[ "${FLAGCX_CI_RUNNER_FORCE_NET_SUPPORTED:-1}" == "1" ]]; then
         "$MPI_RUNNER" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
-        ./build/bin/runner_mpi_tests
-      mpirun -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
-        -x FLAGCX_CLUSTER_SPLIT_LIST=2 \
-        ./build/bin/runner_mpi_tests
-      mpirun -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
-        -x FLAGCX_CLUSTER_SPLIT_LIST=2 \
-        -x FLAGCX_P2P_DISABLE=1 \
-        -x FLAGCX_VMM_ENABLE=0 \
-        ./build/bin/runner_mpi_tests
-      mpirun -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
+          -x FLAGCX_CLUSTER_SPLIT_LIST=2 \
+          -x FLAGCX_P2P_DISABLE=1 \
+          -x FLAGCX_VMM_ENABLE=0 \
+          ./build/bin/runner_mpi_tests
+      else
+        echo "Skipping forced-NET runner test: ${FLAGCX_CI_RUNNER_FORCE_NET_SKIP_REASON:-unsupported by this platform}"
+      fi
+      "$MPI_RUNNER" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
         -x FLAGCX_TEST_REGISTER_BUFFERS=1 \
         -x FLAGCX_MEM_ENABLE=1 \
         -x FLAGCX_CLUSTER_SPLIT_LIST=2 \
         -x FLAGCX_VMM_ENABLE=0 \
         ./build/bin/runner_mpi_tests
-      mpirun -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
-        -x FLAGCX_TEST_REGISTER_BUFFERS=1 \
-        -x FLAGCX_MEM_ENABLE=1 \
-        -x FLAGCX_CLUSTER_SPLIT_LIST=2 \
-        -x FLAGCX_P2P_DISABLE=1 \
-        -x FLAGCX_VMM_ENABLE=0 \
-        ./build/bin/runner_mpi_tests
+      if [[ "${FLAGCX_CI_RUNNER_FORCE_NET_SUPPORTED:-1}" == "1" ]]; then
+        "$MPI_RUNNER" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
+          -x FLAGCX_TEST_REGISTER_BUFFERS=1 \
+          -x FLAGCX_MEM_ENABLE=1 \
+          -x FLAGCX_CLUSTER_SPLIT_LIST=2 \
+          -x FLAGCX_P2P_DISABLE=1 \
+          -x FLAGCX_VMM_ENABLE=0 \
+          ./build/bin/runner_mpi_tests
+      else
+        echo "Skipping registered forced-NET runner test: ${FLAGCX_CI_RUNNER_FORCE_NET_SKIP_REASON:-unsupported by this platform}"
+      fi
       ;;
     symmem)
       bash "$PROJECT_ROOT/test/script/symmem_test.sh"

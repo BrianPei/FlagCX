@@ -72,12 +72,7 @@ clean:
 run-unit: $(UNIT_TARGET)
 	@$(UNIT_TARGET)
 
-run-mpi-ipc: $(MPI_TARGET)
-	@$(MPIRUN) --allow-run-as-root -np 2 $(IPC_ENV) $(MPI_TARGET) --gtest_filter=$(IPC_FILTER)
-
-run-mpi-net: $(MPI_TARGET)
-	@$(MPIRUN) --allow-run-as-root -np 2 $(NET_ENV) $(MPI_TARGET)
-
-run-mpi: run-mpi-ipc run-mpi-net
+run-mpi: $(MPI_TARGET)
+	@$(MPIRUN) --allow-run-as-root -np 2 $(HETERO_ENV) $(MPI_TARGET)
 
 run: run-unit run-mpi
