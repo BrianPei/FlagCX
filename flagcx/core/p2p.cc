@@ -194,6 +194,7 @@ flagcxResult_t flagcxP2pProxySend(struct flagcxP2pResources *resources,
         if (args->transmitted < args->copied) {
           flagcxResult_t res =
               deviceAdaptor->eventQuery(resources->proxyInfo.events[0]);
+          FLAGCXCHECK(res);
           if (res == flagcxSuccess) {
             args->transmitted = args->chunkSteps;
             __atomic_store_n(&regInfoPtr->copyDone, 1, __ATOMIC_RELEASE);
@@ -276,6 +277,7 @@ flagcxResult_t flagcxP2pProxySend(struct flagcxP2pResources *resources,
       int step = args->transmitted & args->sendStepMask;
       flagcxResult_t res =
           deviceAdaptor->eventQuery(resources->proxyInfo.events[step]);
+      FLAGCXCHECK(res);
 
       if (res == flagcxSuccess) {
         args->transmitted++;
@@ -386,6 +388,7 @@ flagcxResult_t flagcxP2pProxyRecv(struct flagcxP2pResources *resources,
         if (args->transmitted < args->copied) {
           flagcxResult_t res =
               deviceAdaptor->eventQuery(resources->proxyInfo.events[0]);
+          FLAGCXCHECK(res);
           if (res == flagcxSuccess) {
             args->transmitted = args->chunkSteps;
             __atomic_store_n(&regInfoPtr->copyDone, 1, __ATOMIC_RELEASE);
@@ -439,6 +442,7 @@ flagcxResult_t flagcxP2pProxyRecv(struct flagcxP2pResources *resources,
       int step = args->transmitted & args->sendStepMask;
       flagcxResult_t res =
           deviceAdaptor->eventQuery(resources->proxyInfo.events[step]);
+      FLAGCXCHECK(res);
 
       if (res == flagcxSuccess) {
         args->transmitted++;
@@ -491,6 +495,7 @@ flagcxResult_t flagcxP2pProxySelfCopy(struct flagcxP2pResources *resources,
     if (args->transmitted < args->copied) {
       flagcxResult_t res = deviceAdaptor->eventQuery(
           resources->proxyInfo.events[args->transmitted]);
+      FLAGCXCHECK(res);
       if (res == flagcxSuccess) {
         args->transmitted++;
       }
