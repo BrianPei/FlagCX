@@ -2949,6 +2949,12 @@ flagcxResult_t flagcxIbIget(void *sendComm, uint64_t srcOff, uint64_t dstOff,
   sge.length = (uint32_t)size;  // checked by flagcxIbGetOneSidedKey
   sge.lkey = lkey;
 
+  TRACE(FLAGCX_NET,
+        "NET/IB : posting RMA READ qpDev=%d qpRemDev=%d remoteAddr=%p "
+        "rkey=0x%x localAddr=%p lkey=0x%x size=%zu srcRank=%d dstRank=%d",
+        qp->devIndex, qp->remDevIdx, srcPtr, rkey, dstPtr, lkey, size, srcRank,
+        dstRank);
+
   struct ibv_send_wr *bad_wr;
   flagcxResult_t res = flagcxWrapIbvPostSendOneSided(qp->qp, &wr, &bad_wr);
   if (res != flagcxSuccess) {

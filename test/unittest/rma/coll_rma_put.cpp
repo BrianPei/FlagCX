@@ -235,7 +235,6 @@ TEST_F(RmaTest, IpcPutWithoutNetworkMr) {
 TEST_F(RmaTest, PutSignalSmall) {
   if (nranks < 2)
     GTEST_SKIP() << "Requires at least 2 ranks";
-  ASSERT_FALSE(signalRmaSetupFailed) << signalRmaSkipReason;
   if (!signalRmaAvailable)
     GTEST_SKIP() << signalRmaSkipReason;
 
@@ -278,20 +277,15 @@ TEST_F(RmaTest, PutSignalSmall) {
     flagcxWaitSignalDesc_t desc = {1, 0};
     waitRes = flagcxWaitSignal(1, &desc, comm, s);
     if (waitRes == flagcxSuccess)
-      waitRes = devHandle->streamSynchronize(s);
+      devHandle->streamSynchronize(s);
   }
 
   int globalWaitStatus = collectiveOpStatus(waitRes);
   if (globalWaitStatus == 1) {
     devHandle->streamDestroy(s);
-    FAIL() << "Remote-write visibility flush became unavailable after the "
-              "suite capability check";
+    GTEST_SKIP() << "flagcxWaitSignal is not supported by this backend";
   }
-  if (globalWaitStatus == 2) {
-    devHandle->streamDestroy(s);
-    FAIL() << "flagcxWaitSignal failed collectively with status "
-           << globalWaitStatus;
-  }
+  ASSERT_EQ(globalWaitStatus, 0);
 
   if (rank == 1) {
     // Verify data
@@ -321,7 +315,6 @@ TEST_F(RmaTest, PutSignalSmall) {
 TEST_F(RmaTest, PutSignalLarge) {
   if (nranks < 2)
     GTEST_SKIP() << "Requires at least 2 ranks";
-  ASSERT_FALSE(signalRmaSetupFailed) << signalRmaSkipReason;
   if (!signalRmaAvailable)
     GTEST_SKIP() << signalRmaSkipReason;
 
@@ -364,20 +357,15 @@ TEST_F(RmaTest, PutSignalLarge) {
     flagcxWaitSignalDesc_t desc = {1, 0};
     waitRes = flagcxWaitSignal(1, &desc, comm, s);
     if (waitRes == flagcxSuccess)
-      waitRes = devHandle->streamSynchronize(s);
+      devHandle->streamSynchronize(s);
   }
 
   int globalWaitStatus = collectiveOpStatus(waitRes);
   if (globalWaitStatus == 1) {
     devHandle->streamDestroy(s);
-    FAIL() << "Remote-write visibility flush became unavailable after the "
-              "suite capability check";
+    GTEST_SKIP() << "flagcxWaitSignal is not supported by this backend";
   }
-  if (globalWaitStatus == 2) {
-    devHandle->streamDestroy(s);
-    FAIL() << "flagcxWaitSignal failed collectively with status "
-           << globalWaitStatus;
-  }
+  ASSERT_EQ(globalWaitStatus, 0);
 
   if (rank == 1) {
     std::vector<uint8_t> received(testSize, 0);

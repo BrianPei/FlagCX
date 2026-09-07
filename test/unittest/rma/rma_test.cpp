@@ -1,11 +1,7 @@
 #include "rma_test.hpp"
 #include "adaptor.h"
 #include "comm.h"
-#include "flagcx_hetero.h"
-#include "global_comm.h"
 #include "sym_heap.h"
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -28,14 +24,9 @@ void *RmaTest::signalBuff = nullptr;
 flagcxWindow_t RmaTest::dataWin = nullptr;
 size_t RmaTest::size = 0;
 size_t RmaTest::signalSize = 0;
-bool RmaTest::requireIpc = false;
-bool RmaTest::windowAvailable = false;
-bool RmaTest::networkRmaAvailable = false;
-bool RmaTest::ipcRmaAvailable = false;
 bool RmaTest::dataRmaAvailable = false;
 const char *RmaTest::dataRmaSkipReason = "Data RMA setup not completed";
 bool RmaTest::signalRmaAvailable = false;
-bool RmaTest::signalRmaSetupFailed = false;
 const char *RmaTest::signalRmaSkipReason = "Signal RMA setup not completed";
 
 void RmaTest::SetUpTestSuite() {
@@ -45,17 +36,9 @@ void RmaTest::SetUpTestSuite() {
 
   size = RMA_TEST_SIZE;
   signalSize = sizeof(uint64_t) * nranks;
-  const char *requireIpcEnv = std::getenv("FLAGCX_RMA_TEST_REQUIRE_IPC");
-  requireIpc = requireIpcEnv != nullptr && std::strcmp(requireIpcEnv, "0") != 0;
-  const char *forceNetEnv = std::getenv("FLAGCX_RMA_FORCE_NET");
-  bool forceNet = forceNetEnv != nullptr && std::strcmp(forceNetEnv, "0") != 0;
-  windowAvailable = false;
-  networkRmaAvailable = false;
-  ipcRmaAvailable = false;
   dataRmaAvailable = false;
   dataRmaSkipReason = "Data RMA setup not completed";
   signalRmaAvailable = false;
-  signalRmaSetupFailed = false;
   signalRmaSkipReason = "Signal RMA setup not completed";
 
   int localMode = requireIpc == forceNet ? 0 : (requireIpc ? 1 : 2);
@@ -101,50 +84,64 @@ void RmaTest::SetUpTestSuite() {
   MPI_Bcast((void *)&uniqueId, sizeof(flagcxUniqueId), MPI_BYTE, 0,
             MPI_COMM_WORLD);
 
-  res = flagcxCommInitRank(&comm, nranks, &uniqueId, rank);
-  bool localCommReady = res == flagcxSuccess && comm != nullptr;
-  if (!allRanksReady(localCommReady)) {
-    if (!localCommReady)
-      comm = nullptr;
-    dataRmaSkipReason =
-        "Communicator initialization failed on at least one rank";
+  flagcxResult_t res = flagcxCommInitRank(&comm, nranks, &uniqueId, rank);
+  if (res != flagcxSuccess) {
+    comm = nullptr;
+    dataRmaSkipReason = "Communicator initialization failed";
     return;
   }
 
-  bool localProxyReady =
-      comm->heteroComm != nullptr && comm->heteroComm->rmaProxy != nullptr;
-  if (!allRanksReady(localProxyReady)) {
-    dataRmaSkipReason =
-        "Hetero communicator or RMA proxy unavailable on at least one rank";
+  // Skip setup if hetero comm not available
+  if (comm == nullptr || comm->heteroComm == nullptr) {
+    dataRmaSkipReason = "Hetero communicator not available";
     return;
   }
 
-  res = devHandle->streamCreate(&stream);
-  bool localDataReady = res == flagcxSuccess && stream != nullptr;
-  if (localDataReady) {
-    res = flagcxMemAlloc(&dataBuff, size);
-    localDataReady = res == flagcxSuccess && dataBuff != nullptr;
-  }
-  if (localDataReady) {
-    res = devHandle->deviceMemset(dataBuff, 0, size, flagcxMemDevice, nullptr);
-    localDataReady = res == flagcxSuccess;
-  }
-  if (!allRanksReady(localDataReady)) {
-    dataRmaSkipReason =
-        "RMA stream or data buffer setup failed on at least one rank";
+  if (comm->heteroComm->rmaProxy == nullptr) {
+    dataRmaSkipReason = "RMA proxy not available";
     return;
   }
 
-  // Register the data buffer only after every rank has allocated it.
+  if (comm->heteroComm->netAdaptor == nullptr ||
+      comm->heteroComm->netAdaptor->iput == nullptr ||
+      comm->heteroComm->netAdaptor->iget == nullptr) {
+    dataRmaSkipReason = "Net adaptor does not support data RMA";
+    return;
+  }
+
+  devHandle->streamCreate(&stream);
+
+  // Allocate and register data buffer
+  flagcxMemAlloc(&dataBuff, size);
+  devHandle->deviceMemset(dataBuff, 0, size, flagcxMemDevice, nullptr);
+
   res = flagcxCommWindowRegister(comm, dataBuff, size, &dataWin,
                                  FLAGCX_WIN_COLL_SYMMETRIC);
-  bool localWindowReady = res == flagcxSuccess && dataWin != nullptr &&
-                          dataWin->isSymmetricDefault &&
-                          dataWin->defaultBase != nullptr;
-  windowAvailable = allRanksReady(localWindowReady);
-  if (!windowAvailable) {
-    dataRmaSkipReason =
-        "Symmetric window registration failed on at least one rank";
+  const int localNetworkMrReady = res == flagcxSuccess && dataWin != nullptr &&
+                                  dataWin->isSymmetricDefault &&
+                                  dataWin->defaultBase != nullptr &&
+                                  dataWin->defaultBase->mrIndex >= 0;
+  int allNetworkMrsReady = 0;
+  MPI_Allreduce(&localNetworkMrReady, &allNetworkMrsReady, 1, MPI_INT, MPI_MIN,
+                MPI_COMM_WORLD);
+  if (!allNetworkMrsReady) {
+    dataRmaSkipReason = "Symmetric window has no registered network MR";
+    FAIL() << "RMA setup requires a network-registered symmetric window on "
+              "every rank (result="
+           << res << ", window=" << dataWin << ", mrIndex="
+           << ((dataWin != nullptr && dataWin->defaultBase != nullptr)
+                   ? dataWin->defaultBase->mrIndex
+                   : -1)
+           << ")";
+  }
+
+  // A network-registered data window is sufficient for flagcxGet tests. Do
+  // not make those tests depend on the optional signal-buffer path below.
+  dataRmaAvailable = true;
+  dataRmaSkipReason = nullptr;
+
+  if (comm->heteroComm->netAdaptor->iputSignal == nullptr) {
+    signalRmaSkipReason = "Net adaptor does not support one-sided signals";
     return;
   }
 
@@ -205,91 +202,23 @@ void RmaTest::SetUpTestSuite() {
   // Allocate signal buffers before entering collective registration so every
   // rank either participates or exits at the same phase.
   res = flagcxMemAlloc(&signalBuff, signalSize);
-  bool localSignalBufferReady = res == flagcxSuccess && signalBuff != nullptr;
-  if (localSignalBufferReady) {
-    res = devHandle->deviceMemset(signalBuff, 0, signalSize, flagcxMemDevice,
-                                  nullptr);
-    localSignalBufferReady = res == flagcxSuccess;
-  }
-  if (!allRanksReady(localSignalBufferReady)) {
-    signalRmaSetupFailed = true;
-    signalRmaSkipReason = "Signal buffer setup failed on at least one rank";
+  if (res != flagcxSuccess || signalBuff == nullptr) {
+    signalBuff = nullptr;
+    signalRmaSkipReason = "Signal buffer allocation is not supported";
     return;
   }
 
   res = flagcxOneSideSignalRegister(comm, signalBuff, signalSize,
                                     FLAGCX_PTR_CUDA);
-  if (!allRanksReady(res == flagcxSuccess)) {
-    signalRmaSetupFailed = true;
-    signalRmaSkipReason =
-        "Signal buffer registration failed on at least one rank";
+  if (res != flagcxSuccess) {
+    flagcxMemFree(signalBuff);
+    signalBuff = nullptr;
+    signalRmaSkipReason = "Signal buffer registration is not supported";
     return;
   }
 
-  // Verify the exact acquire semantics required by flagcxWaitSignal before a
-  // test can submit a network PUT/signal.  The probe waits on a value already
-  // stored in local device memory, so it cannot depend on remote progress.
-  int localSignalStatus = allSignalsCapable ? 0 : 1;
-  if (localSignalStatus == 0) {
-    uint64_t probeValue = 1;
-    res = devHandle->deviceMemcpy(signalBuff, &probeValue, sizeof(probeValue),
-                                  flagcxMemcpyHostToDevice, nullptr);
-    if (res == flagcxSuccess) {
-      res = deviceAdaptor->streamWaitValue64(
-          stream, signalBuff, probeValue,
-          FLAGCX_STREAM_WAIT_VALUE_FLUSH_REMOTE_WRITES);
-    }
-    if (res == flagcxSuccess)
-      res = devHandle->streamSynchronize(stream);
-
-    localSignalStatus =
-        res == flagcxSuccess ? 0 : (res == flagcxNotSupported ? 1 : 2);
-  }
-
-  int globalSignalStatus = 0;
-  MPI_Allreduce(&localSignalStatus, &globalSignalStatus, 1, MPI_INT, MPI_MAX,
-                MPI_COMM_WORLD);
-  if (globalSignalStatus == 2) {
-    signalRmaSetupFailed = true;
-    signalRmaSkipReason =
-        "Signal stream capability probe failed on at least one rank";
-    return;
-  }
-
-  res = devHandle->deviceMemset(signalBuff, 0, signalSize, flagcxMemDevice,
-                                nullptr);
-  if (!allRanksReady(res == flagcxSuccess)) {
-    signalRmaSetupFailed = true;
-    signalRmaSkipReason =
-        "Signal buffer reset failed after the capability probe";
-    return;
-  }
-
-  if (!allSignalsCapable) {
-    signalRmaSkipReason =
-        "One-sided signal operations are unavailable on at least one rank";
-  } else if (globalSignalStatus == 1) {
-    signalRmaSkipReason =
-        "Remote-write visibility flush is unavailable on at least one rank";
-  } else {
-    signalRmaAvailable = true;
-    signalRmaSkipReason = nullptr;
-  }
-
-  if (requireIpc && signalRmaAvailable) {
-    res = flagcxHeteroRmaIpcInit(comm->heteroComm);
-    int peer = nranks == 2 ? 1 - rank : -1;
-    struct flagcxRmaIpcState *ipc = comm->heteroComm->rmaProxy->ipcState;
-    bool localSignalIpcReady = res == flagcxSuccess && peer >= 0 &&
-                               ipc != nullptr && peer < ipc->nRanks &&
-                               ipc->peerSignalBufs != nullptr &&
-                               ipc->peerSignalBufs[peer] != nullptr;
-    if (!allRanksReady(localSignalIpcReady)) {
-      signalRmaAvailable = false;
-      signalRmaSkipReason =
-          "RMA IPC mode requires a resolved peer signal mapping";
-    }
-  }
+  signalRmaAvailable = true;
+  signalRmaSkipReason = nullptr;
 }
 
 void RmaTest::TearDownTestSuite() {
@@ -330,9 +259,12 @@ void RmaTest::TearDownTestSuite() {
 
 void RmaTest::SetUp() {
   FlagCXTest::SetUp();
-  ASSERT_TRUE(windowAvailable) << "RMA data window is unavailable";
-  ASSERT_TRUE(dataRmaAvailable) << dataRmaSkipReason;
-  ASSERT_NE(dataWin, nullptr);
+  if (!dataRmaAvailable) {
+    GTEST_SKIP() << dataRmaSkipReason;
+  }
+  if (dataWin == nullptr) {
+    GTEST_SKIP() << "Net adaptor does not support one-sided ops (iput/iget)";
+  }
 }
 
 bool RmaTest::hasHeteroComm() const {

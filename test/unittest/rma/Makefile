@@ -16,13 +16,10 @@ MPI_SRCS   := $(wildcard coll_*.cpp) rma_test.cpp main_mpi.cpp
 MPI_OBJS   := $(MPI_SRCS:%.cpp=$(OBJDIR)/%.o)
 MPI_TARGET := $(BINDIR)/rma_mpi_tests
 
-# Common environment for single-node heterogeneous RMA tests. Keep transport
-# selection out of this list so CI can exercise IPC and RDMA independently.
-RMA_PLATFORM_ENV ?=
-HETERO_ENV := -x FLAGCX_USE_HETERO_COMM=1 -x FLAGCX_MEM_ENABLE=1 -x FLAGCX_VMM_ENABLE=0 $(RMA_PLATFORM_ENV)
-IPC_ENV := $(HETERO_ENV) -x FLAGCX_IB_DISABLE=1 -x FLAGCX_RMA_FORCE_NET=0 -x FLAGCX_RMA_TEST_REQUIRE_IPC=1
-NET_ENV := $(HETERO_ENV) -x FLAGCX_RMA_FORCE_NET=1 -x FLAGCX_RMA_TEST_REQUIRE_IPC=0
-IPC_FILTER := RmaTest.IpcResolvedPeerPointerSupportsDirectCopy:RmaTest.IpcPutWithoutNetworkMr:RmaTest.PutSignalSmall:RmaTest.PutSignalLarge:RmaTest.SignalOnlyNoData:RmaTest.MultipleSignals
+# Exercise the network-backed RMA implementation even on a single node.  This
+# makes window registration fail immediately when a usable network MR/full
+# mesh is unavailable instead of silently falling back to IPC/VMM access.
+HETERO_ENV := -x FLAGCX_USE_HETERO_COMM=1 -x FLAGCX_MEM_ENABLE=1 -x FLAGCX_VMM_ENABLE=0 -x FLAGCX_DEVICE_ONE_SIDED_FORCE_NET=1
 
 .PHONY: all clean run-unit run-mpi-ipc run-mpi-net run-mpi run
 

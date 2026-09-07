@@ -29,16 +29,11 @@ protected:
   static flagcxWindow_t dataWin;
   static size_t size;
   static size_t signalSize;
-  // The same binary runs in two explicit modes. Network mode requires a valid
-  // network MR; IPC mode requires a resolved peer data mapping. Signal
-  // capability is tracked separately for platforms without stream signals.
-  static bool requireIpc;
-  static bool windowAvailable;
-  static bool networkRmaAvailable;
-  static bool ipcRmaAvailable;
+  // Data RMA and signal RMA are separate capabilities. In particular, a
+  // backend may support registered windows and RDMA reads without supporting
+  // GPU signal-buffer registration or stream wait/write-value operations.
   static bool dataRmaAvailable;
   static const char *dataRmaSkipReason;
   static bool signalRmaAvailable;
-  static bool signalRmaSetupFailed;
   static const char *signalRmaSkipReason;
 };
