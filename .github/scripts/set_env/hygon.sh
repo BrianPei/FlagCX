@@ -10,7 +10,21 @@ if [[ -f /opt/dtk/env.sh ]]; then
   source /opt/dtk/env.sh
 fi
 
-FLAGCX_CI_MPI_BASE_HOME=${MPI_HOME:-/opt/mpi}
+export PATH="$CUDA_PATH/bin:$PATH"
+
+# Prefer the Hygon MPI/UCX stack shipped with the fixed CI image.  Falling
+# back to /opt/mpi keeps older Hygon images usable.
+if [[ -d /opt/hygon/openmpi ]]; then
+  FLAGCX_CI_MPI_BASE_HOME=/opt/hygon/openmpi
+else
+  FLAGCX_CI_MPI_BASE_HOME=${MPI_HOME:-/opt/mpi}
+fi
+
+if [[ -d /opt/hygon/ucx ]]; then
+  export UCX_HOME=/opt/hygon/ucx
+  export PATH="$UCX_HOME/bin:$PATH"
+  export LD_LIBRARY_PATH="$UCX_HOME/lib:$UCX_HOME/lib/ucx:${LD_LIBRARY_PATH:-}"
+fi
 
 # Use the real OpenMPI launcher if the image provides a wrapper.
 if [[ -x "$FLAGCX_CI_MPI_BASE_HOME/bin/mpirun.real" ]]; then
@@ -24,6 +38,11 @@ if [[ -x "$FLAGCX_CI_MPI_BASE_HOME/bin/mpirun.real" ]]; then
 else
   export MPI_HOME=$FLAGCX_CI_MPI_BASE_HOME
 fi
+
+# Keep the launcher and its PMIx/PRRTE libraries from being mixed with the
+# legacy /opt/mpi stack that is still present in the image.
+export PATH="$MPI_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$MPI_HOME/lib:$MPI_HOME/lib/pmix:${LD_LIBRARY_PATH:-}"
 
 export FLAGCX_ADAPTOR=du
 export USE_DU=1
