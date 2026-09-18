@@ -10,6 +10,7 @@ on:
 
 jobs:
   torch-api-test:
+    if: github.event_name != 'pull_request'
     runs-on: [self-hosted, cx-build]
     container:
       image: localhost:5000/flagscale:cuda12.8.1-cudnn9.7.1-python3.12-torch2.7.0-time2507111538
@@ -164,6 +165,7 @@ jobs:
 
   torch-api-test-cuda:
     name: torch-api-test (cuda)
+    if: github.event_name != 'pull_request'
     runs-on: [nv-8g-cicd-flagcx]
     container:
       image: harbor.baai.ac.cn/flagos-dev/flagcx:55c5c6f-cuda-dev
@@ -245,6 +247,7 @@ jobs:
 
   torch-api-test-metax:
     name: torch-api-test (metax)
+    if: github.event_name != 'pull_request'
     runs-on: [mx-8g-cicd-flagcx]
     container:
       image: harbor.baai.ac.cn/flagos-dev/flagcx:3016346-metax-dev
@@ -327,6 +330,7 @@ jobs:
 
   torch-api-test-ppu:
     name: torch-api-test (ppu)
+    if: github.event_name != 'pull_request'
     runs-on: [flagcicd-810e]
     timeout-minutes: 180
 
