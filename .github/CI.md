@@ -61,8 +61,9 @@ Repository configuration:
 
 - Secret `FLAGCICD_API_TOKEN`: bearer token for the metrics endpoint.
 - Optional variable `FLAGCICD_HOST_IP`: IP for `flagcicd-inner.flagos.net` inside
-  the uploading job's container. With no variable, normal DNS is used.
-- Endpoint: `http://flagcicd-inner.flagos.net:8000/metrics/`.
+  the uploading job's container. This legacy host mapping is not used by the
+  current HTTPS endpoint, which uses normal DNS.
+- Endpoint: `https://flagcicd.flagos.net/flagcicd/api/v1/cicd/metrics/`.
 
 The token is explicitly forwarded only for source in the same repository.
 Fork PRs, including comment-triggered runs, generate/archive reports but skip
