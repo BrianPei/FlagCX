@@ -606,7 +606,7 @@ class PlatformCiRegressionTest(unittest.TestCase):
         self.assertNotIn("FLAGCX_CI_PR_NUMBER", unit_workflow)
 
         expected_suites = {
-            "ascend": ["core", "adaptor", "service"],
+            "ascend": ["core", "adaptor", "kernel", "service", "topo"],
             "cuda": [
                 "adaptor",
                 "core",
