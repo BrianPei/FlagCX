@@ -596,9 +596,18 @@ class PlatformCiRegressionTest(unittest.TestCase):
         unit_workflow = (
             REPO_ROOT / ".github/workflows/unit-test.yml"
         ).read_text()
+        common_unit_workflow = (
+            REPO_ROOT / ".github/workflows/unit_tests_common.yml"
+        ).read_text()
         self.assertIn(
             "EVENT_SELECTION: ${{ inputs.platform || 'all' }}",
             unit_workflow,
+        )
+        self.assertIn('if [[ "$FLAGCX_CI_PLATFORM" == "ascend" ]]; then', common_unit_workflow)
+        self.assertIn("if command -v git >/dev/null 2>&1; then", common_unit_workflow)
+        self.assertLess(
+            common_unit_workflow.index("if command -v git >/dev/null 2>&1; then"),
+            common_unit_workflow.index("git_version=\"$(git --version"),
         )
         self.assertNotIn("pull_request.number == 643", unit_workflow)
         self.assertNotIn("pull_request.number == 648", unit_workflow)
