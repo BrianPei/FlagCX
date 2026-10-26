@@ -12,6 +12,20 @@ HYGON_ENV = REPO_ROOT / ".github/scripts/set_env/hygon.sh"
 
 
 class PlatformCiRegressionTest(unittest.TestCase):
+    def test_kunlunxin_ci_reports_missing_xpu_test_toolchain_as_skipped(self):
+        env_script = (
+            REPO_ROOT / ".github/scripts/set_env/kunlunxin.sh"
+        ).read_text()
+        runner = (
+            REPO_ROOT / ".github/scripts/ci/run_unit_test.sh"
+        ).read_text()
+        self.assertIn("flagcx_ci_find_xpu_toolchain", env_script)
+        self.assertIn("FLAGCX_CI_XPU_TOOLCHAIN_AVAILABLE=0", env_script)
+        self.assertIn("SKIPPED $suite", env_script)
+        self.assertIn("FLAGCX_CI_REQUIRE_ADAPTOR_GPU_TESTS", env_script)
+        self.assertIn("Skipping KunlunXin GDR visibility conformance", runner)
+        self.assertIn("Skipping $platform_name VMM + NET data tests", runner)
+
     def test_gpu_ci_world_uses_four_ranks(self):
         for platform in ("cuda", "metax", "hygon", "ppu"):
             with self.subTest(platform=platform):

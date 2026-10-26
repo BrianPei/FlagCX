@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+FLAGCX_CI_ENV_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=/dev/null
+source "$FLAGCX_CI_ENV_DIR/../ci/rdma_static_preflight.sh"
+
 MPI_HOME=${MPI_HOME:-/usr/local/mpich-3.3.2}
 CCL_HOME=${CCL_HOME:-/usr/local/xccl_Linux_x86_64}
 DEVICE_HOME=${DEVICE_HOME:-/usr/local/xpu}
@@ -16,6 +20,10 @@ FLAGCX_CI_PROJECT_MAKE_ARGS=(USE_KUNLUNXIN=1 MPI_HOME="$MPI_HOME" CCL_HOME="$CCL
 FLAGCX_CI_TEST_MAKE_ARGS=(USE_KUNLUNXIN=1 MPI_HOME="$MPI_HOME" CCL_HOME="$CCL_HOME" DEVICE_HOME="$DEVICE_HOME" "HOST_CXXFLAGS=-include cstddef")
 FLAGCX_CI_ENABLE_IBUC=0
 FLAGCX_CI_ENABLE_SHARED_P2P_ENGINE=0
+# The adaptor's four GPU one-sided cases require a GDR allocation contract
+# that is not provided by the current XPU runtime. Keep the adaptor suite
+# running, but do not turn unsupported capability cases into a CI failure.
+FLAGCX_CI_REQUIRE_ADAPTOR_GPU_TESTS=0
 FLAGCX_CI_INTRA_NP=4
 FLAGCX_CI_NODE_NP=4
 FLAGCX_CI_RUNNER_NP=4
@@ -23,6 +31,52 @@ export NP=4
 
 FLAGCX_CI_NODE1_MPI_ARGS=(-x FLAGCX_HOSTID=node0)
 FLAGCX_CI_NODE2_MPI_ARGS=(-x FLAGCX_HOSTID=node1)
+
+flagcx_ci_find_xpu_toolchain() {
+  local root
+  local -a candidates=(
+    "${XTDK_HOME:-}"
+    /workspace/my_flagcx/xtdk-llvm15-ubuntu2004_x86_64
+    /usr/local/xtdk-llvm15-ubuntu2004_x86_64
+    /opt/xtdk-llvm15-ubuntu2004_x86_64
+  )
+  for root in "${candidates[@]}"; do
+    [[ -n "$root" ]] || continue
+    if [[ -x "$root/bin/clang++" && -f "$root/include/xpu/kernel/xtdk.h" ]]; then
+      printf '%s\n' "$root"
+      return 0
+    fi
+  done
+  return 1
+}
+
+flagcx_ci_build_suite_override() {
+  local suite=$1
+  if [[ ( "$suite" == device_api || "$suite" == device_api_unified_ir ) &&
+        "${FLAGCX_CI_XPU_TOOLCHAIN_AVAILABLE:-0}" != 1 ]]; then
+    FLAGCX_CI_BUILD_SUITE_OVERRIDE_HANDLED=1
+    echo "Skipping $suite: XTDK clang++ and xpu/kernel/xtdk.h are not present in the CI image"
+  else
+    FLAGCX_CI_BUILD_SUITE_OVERRIDE_HANDLED=0
+  fi
+}
+
+flagcx_ci_run_suite_override() {
+  local suite=$1
+  if [[ ( "$suite" == device_api || "$suite" == device_api_unified_ir ) &&
+        "${FLAGCX_CI_XPU_TOOLCHAIN_AVAILABLE:-0}" != 1 ]]; then
+    FLAGCX_CI_RUN_SUITE_OVERRIDE_HANDLED=1
+    echo "SKIPPED $suite: install or mount the KunlunXin XTDK toolchain to enable this suite"
+  else
+    FLAGCX_CI_RUN_SUITE_OVERRIDE_HANDLED=0
+  fi
+}
+
+flagcx_ci_validate_rdma() {
+  local suite=$1
+  flagcx_ci_validate_rdma_static KunlunXin "$suite" \
+    "/sys/class/infiniband/*"
+}
 
 flagcx_ci_prepare() {
   local suite=$1
@@ -34,4 +88,14 @@ flagcx_ci_prepare() {
   xpu-smi -L
   test -d "$CCL_HOME/include"
   test -d "$CCL_HOME/so"
+  local toolchain
+  if toolchain=$(flagcx_ci_find_xpu_toolchain); then
+    export FLAGCX_CI_XPU_TOOLCHAIN_AVAILABLE=1
+    FLAGCX_CI_PROJECT_MAKE_ARGS+=(XTDK_HOME="$toolchain")
+    FLAGCX_CI_TEST_MAKE_ARGS+=(XTDK_HOME="$toolchain")
+    echo "KunlunXin XTDK toolchain: $toolchain"
+  else
+    export FLAGCX_CI_XPU_TOOLCHAIN_AVAILABLE=0
+    echo "KunlunXin XTDK toolchain not found; device_api and device_api_unified_ir will be skipped"
+  fi
 }
