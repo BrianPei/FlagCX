@@ -825,6 +825,11 @@ class PlatformCiRegressionTest(unittest.TestCase):
         )
         self.assertIn("hygon|enflame)", rma_case)
         self.assertIn("Skipping Enflame GDR visibility consumer tests", rma_case)
+
+        enflame_env = (REPO_ROOT / ".github/scripts/set_env/enflame.sh").read_text()
+        self.assertIn("TOPS device-kernel test backend is not present", enflame_env)
+        self.assertIn("runner has no ACTIVE RDMA HCA", enflame_env)
+        self.assertIn("FLAGCX_CI_SKIP_SUITE", unit_runner)
         self.assertIn(
             '-x FLAGCX_CI_GDR_VISIBILITY_EXPECT_SETUP=success_or_unsupported',
             rma_case,
