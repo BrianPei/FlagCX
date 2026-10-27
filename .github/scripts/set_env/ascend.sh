@@ -37,37 +37,51 @@ FLAGCX_CI_NODE2_MPI_ARGS=(
 
 flagcx_ci_configure_suite() {
   case "$1" in
-    core|adaptor|device|device_api_host|kernel|p2p|rma|runner|service|symmem|topo) ;;
+    core|adaptor|device_api_host|p2p|rma|runner|service|symmem) ;;
     *) echo "Ascend CI does not enable suite: $1" >&2; return 1 ;;
   esac
 }
 
-flagcx_ci_build_suite_override() {
+flagcx_ci_build_suite_additional() {
   local suite=$1
-  local suite_dir=$2
-  shift 2
+  local -a args=("${FLAGCX_CI_TEST_MAKE_ARGS[@]}")
   case "$suite" in
-    device)
-      FLAGCX_CI_BUILD_SUITE_OVERRIDE_HANDLED=1
-      make -C "$suite_dir" --jobs="$(nproc)" all "$@"
+    adaptor)
+      make -C "$PROJECT_ROOT/test/unittest/device" --jobs="$(nproc)" \
+        all "${args[@]}"
       ;;
-    *)
-      FLAGCX_CI_BUILD_SUITE_OVERRIDE_HANDLED=0
+    device_api_host)
+      make -C "$PROJECT_ROOT/test/unittest/kernel" --jobs="$(nproc)" \
+        "$PROJECT_ROOT/test/unittest/kernel/build/bin/kernel_unit_tests" \
+        "${args[@]}"
+      ;;
+    core)
+      make -C "$PROJECT_ROOT/test/unittest/topo" --jobs="$(nproc)" \
+        all "${args[@]}"
       ;;
   esac
 }
 
-flagcx_ci_run_suite_override() {
+flagcx_ci_run_suite_additional() {
   local suite=$1
-  local suite_dir=$2
-  shift 2
-  if [[ "$suite" == device ]]; then
-    FLAGCX_CI_RUN_SUITE_OVERRIDE_HANDLED=1
-    FLAGCX_CI_TEST_LABEL="Ascend device unit tests" \
-      "$TEST_RUNNER" "$suite_dir/build/bin/device_test"
-  else
-    FLAGCX_CI_RUN_SUITE_OVERRIDE_HANDLED=0
-  fi
+  local -a args=("${FLAGCX_CI_TEST_MAKE_ARGS[@]}")
+  case "$suite" in
+    adaptor)
+      FLAGCX_CI_TEST_LABEL="Ascend device tests (adaptor suite)" \
+        "$TEST_RUNNER" make -C "$PROJECT_ROOT/test/unittest/device" run \
+        "${args[@]}"
+      ;;
+    device_api_host)
+      FLAGCX_CI_TEST_LABEL="Ascend kernel host tests (device_api_host suite)" \
+        "$TEST_RUNNER" make -C "$PROJECT_ROOT/test/unittest/kernel" run-unit \
+        "${args[@]}"
+      ;;
+    core)
+      FLAGCX_CI_TEST_LABEL="Ascend topology tests (core suite)" \
+        "$TEST_RUNNER" make -C "$PROJECT_ROOT/test/unittest/topo" run-unit \
+        "${args[@]}"
+      ;;
+  esac
 }
 
 flagcx_ci_prepare() {
@@ -83,6 +97,9 @@ flagcx_ci_prepare() {
   npu-smi info
   ls -l /dev/davinci* /dev/infiniband
   command -v g++
+  if [[ "$suite" == core ]]; then
+    flagcx_ci_validate_rdma core
+  fi
 }
 
 flagcx_ci_validate_rdma() {

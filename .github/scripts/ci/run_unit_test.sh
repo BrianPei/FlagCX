@@ -904,4 +904,18 @@ esac
 
 build_project
 build_suite
-run_suite
+if declare -F flagcx_ci_build_suite_additional >/dev/null; then
+  flagcx_ci_build_suite_additional "$SUITE"
+fi
+if declare -F flagcx_ci_run_suite_additional >/dev/null; then
+  suite_status=0
+  additional_status=0
+  run_suite || suite_status=$?
+  flagcx_ci_run_suite_additional "$SUITE" || additional_status=$?
+  if ((suite_status != 0 || additional_status != 0)); then
+    echo "Suite failures: primary=$suite_status additional=$additional_status" >&2
+    exit 1
+  fi
+else
+  run_suite
+fi

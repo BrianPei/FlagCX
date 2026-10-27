@@ -618,15 +618,12 @@ class PlatformCiRegressionTest(unittest.TestCase):
             "ascend": [
                 "core",
                 "adaptor",
-                "device",
                 "device_api_host",
-                "kernel",
                 "p2p",
                 "rma",
                 "runner",
                 "service",
                 "symmem",
-                "topo",
             ],
             "cuda": [
                 "adaptor",
@@ -695,8 +692,10 @@ class PlatformCiRegressionTest(unittest.TestCase):
         self.assertIn("FLAGCX_CI_ENABLE_PXN=0", ascend_env)
         self.assertIn("FLAGCX_CI_NODE1_MPI_ARGS=(", ascend_env)
         self.assertIn("FLAGCX_CI_NODE2_MPI_ARGS=(", ascend_env)
-        self.assertIn('FLAGCX_CI_RUN_SUITE_OVERRIDE_HANDLED=0', ascend_env)
-        self.assertIn('FLAGCX_CI_BUILD_SUITE_OVERRIDE_HANDLED=0', ascend_env)
+        for suite_dir in ("device", "kernel", "topo"):
+            self.assertIn(f"test/unittest/{suite_dir}", ascend_env)
+        self.assertIn("flagcx_ci_build_suite_additional", ascend_env)
+        self.assertIn("flagcx_ci_run_suite_additional", ascend_env)
 
         for workflow_name in (
             "test.yml",
