@@ -13,7 +13,7 @@ HYGON_ENV = REPO_ROOT / ".github/scripts/set_env/hygon.sh"
 
 class PlatformCiRegressionTest(unittest.TestCase):
     def test_gpu_ci_world_uses_four_ranks(self):
-        for platform in ("cuda", "metax", "hygon", "ppu"):
+        for platform in ("cuda", "metax", "hygon", "ppu", "ascend"):
             with self.subTest(platform=platform):
                 source = (
                     REPO_ROOT / f".github/scripts/set_env/{platform}.sh"
@@ -619,7 +619,7 @@ class PlatformCiRegressionTest(unittest.TestCase):
                 "core",
                 "adaptor",
                 "device",
-                "device_api",
+                "device_api_host",
                 "kernel",
                 "p2p",
                 "rma",
@@ -685,6 +685,18 @@ class PlatformCiRegressionTest(unittest.TestCase):
                 expected,
                 platform,
             )
+
+        ascend_env = (
+            REPO_ROOT / ".github/scripts/set_env/ascend.sh"
+        ).read_text()
+        self.assertIn("FLAGCX_CI_INTRA_NP=4", ascend_env)
+        self.assertIn("FLAGCX_CI_NODE_NP=2", ascend_env)
+        self.assertIn("FLAGCX_CI_RUNNER_NP=4", ascend_env)
+        self.assertIn("FLAGCX_CI_ENABLE_PXN=0", ascend_env)
+        self.assertIn("FLAGCX_CI_NODE1_MPI_ARGS=(", ascend_env)
+        self.assertIn("FLAGCX_CI_NODE2_MPI_ARGS=(", ascend_env)
+        self.assertIn('FLAGCX_CI_RUN_SUITE_OVERRIDE_HANDLED=0', ascend_env)
+        self.assertIn('FLAGCX_CI_BUILD_SUITE_OVERRIDE_HANDLED=0', ascend_env)
 
         for workflow_name in (
             "test.yml",

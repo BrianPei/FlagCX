@@ -50,7 +50,7 @@ unit_test_suites:
   - core
   - adaptor
   - device
-  - device_api
+  - device_api_host
   - kernel
   - p2p
   - rma
