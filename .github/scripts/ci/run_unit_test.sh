@@ -65,7 +65,7 @@ flagcx_ci_require_rdma() {
   esac
 
   case "$suite" in
-    adaptor|p2p|rma|runner|symmem|device_api|device_api_unified_ir) ;;
+    adaptor|p2p|rma|runner|symmem|topo|device_api|device_api_unified_ir) ;;
     *) return 0 ;;
   esac
 
@@ -756,6 +756,23 @@ run_suite() {
           --gtest_filter=FlagCXCollTest.SendRecv:FlagCXCollTest.AllReduce:FlagCXCollTest.AlltoAll
       fi
       ;;
+    device)
+      FLAGCX_CI_TEST_LABEL="device unit tests" \
+        "$TEST_RUNNER" make -C "$suite_dir" run "${args[@]}"
+      ;;
+    topo)
+      FLAGCX_CI_TEST_LABEL="$SUITE unit tests" \
+        "$TEST_RUNNER" make -C "$suite_dir" run-unit "${args[@]}"
+      ;;
+    kernel)
+      FLAGCX_CI_TEST_LABEL="kernel unit tests" \
+        "$TEST_RUNNER" make -C "$suite_dir" run-unit "${args[@]}"
+      FLAGCX_CI_MPI_LABEL="kernel MPI tests" \
+        "$MPI_RUNNER" --allow-run-as-root -np "$FLAGCX_CI_INTRA_NP" \
+        -x FLAGCX_USE_HETERO_COMM=1 -x FLAGCX_MEM_ENABLE=1 \
+        -x FLAGCX_VMM_ENABLE=0 -x LD_LIBRARY_PATH \
+        "$suite_dir/build/bin/kernel_mpi_tests"
+      ;;
     symmem)
       bash "$PROJECT_ROOT/test/script/symmem_test.sh"
       : "${FLAGCX_CI_SYMMEM_NODE_NP:=2}"
@@ -914,7 +931,7 @@ run_suite() {
 }
 
 case "$SUITE" in
-  adaptor|core|device_api_host|p2p|rma|runner|service|symmem)
+  adaptor|core|device|device_api_host|kernel|p2p|rma|runner|service|symmem|topo)
     build_googletest
     ;;
   device_api|device_api_unified_ir)

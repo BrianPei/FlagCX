@@ -383,10 +383,36 @@ class CiWorkflowWiringTest(unittest.TestCase):
         ):
             source = path.read_text()
             self.assertIn("workflow_call:", source)
-            for platform in ("cuda", "hygon", "metax", "ppu"):
+            for platform in ("cuda", "hygon", "metax", "ppu", "kunlunxin"):
                 self.assertIn(f"contains(fromJSON(inputs.platforms), '{platform}')", source)
             self.assertIn("if: always()", source)
             self.assertIn("check_platform_workflow.sh", source)
+
+    def test_kunlunxin_performance_job_uses_platform_config_and_gate(self):
+        workflow = yaml.safe_load(
+            (REPO_ROOT / ".github/workflows/test.yml").read_text()
+        )
+        jobs = workflow["jobs"]
+        job = jobs["perf-test-kunlunxin"]
+        self.assertEqual(
+            job["if"], "contains(fromJSON(inputs.platforms), 'kunlunxin')"
+        )
+        self.assertIn(
+            "outputs.kunlunxin_runs_on",
+            job["runs-on"],
+        )
+        steps = {step.get("name"): step for step in job["steps"]}
+        run_step = steps["Run perf-test (kunlunxin) in configured container"]
+        self.assertEqual(
+            run_step["env"]["FLAGCX_CI_IMAGE"],
+            "${{ needs.load-hardware-container-configs.outputs.kunlunxin_ci_image }}",
+        )
+        self.assertIn("kunlunxin perf", run_step["run"])
+        self.assertIn("perf-test-kunlunxin", jobs["perf_complete"]["needs"])
+        self.assertIn(
+            "Validate selected KunlunXin performance job",
+            [step.get("name") for step in jobs["perf_complete"]["steps"]],
+        )
 
     def test_kunlunxin_torch_api_job_uses_platform_config_and_hardware_runner(self):
         workflow = yaml.safe_load(

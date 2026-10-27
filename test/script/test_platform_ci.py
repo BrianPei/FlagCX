@@ -23,8 +23,25 @@ class PlatformCiRegressionTest(unittest.TestCase):
         self.assertIn("FLAGCX_CI_XPU_TOOLCHAIN_AVAILABLE=0", env_script)
         self.assertIn("SKIPPED $suite", env_script)
         self.assertIn("FLAGCX_CI_REQUIRE_ADAPTOR_GPU_TESTS", env_script)
+        self.assertIn("FLAGCX_CI_REQUIRE_ADAPTOR_GPU_TESTS=1", env_script)
+        self.assertIn("FLAGCX_CI_ENABLE_SHARED_P2P_ENGINE=1", env_script)
+        self.assertIn("FLAGCX_CI_PROJECT_MAKE_ARGS+=(USE_SHMEM=1)", env_script)
+        self.assertIn("FLAGCX_CI_TEST_MAKE_ARGS+=(USE_SHMEM=1)", env_script)
         self.assertIn("Skipping KunlunXin GDR visibility conformance", runner)
         self.assertIn("Skipping $platform_name VMM + NET data tests", runner)
+        self.assertIn('    device)', runner)
+        self.assertIn('    topo)', runner)
+        self.assertIn('kernel)', runner)
+        self.assertIn('"$MPI_RUNNER" --allow-run-as-root -np "$FLAGCX_CI_INTRA_NP"', runner)
+
+        perf_workflow = (REPO_ROOT / ".github/workflows/test.yml").read_text()
+        self.assertIn("perf-test-kunlunxin:", perf_workflow)
+        self.assertIn("kunlunxin perf", perf_workflow)
+        handler = (
+            REPO_ROOT / ".github/scripts/ci/run_kunlunxin_workload.sh"
+        ).read_text()
+        self.assertIn("run_host_perf_suite.sh\" homogeneous", handler)
+        self.assertIn("run_host_perf_suite.sh\" heterogeneous", handler)
 
     def test_gpu_ci_world_uses_four_ranks(self):
         for platform in ("cuda", "metax", "hygon", "ppu"):
@@ -650,14 +667,17 @@ class PlatformCiRegressionTest(unittest.TestCase):
             "kunlunxin": [
                 "adaptor",
                 "core",
+                "device",
                 "device_api",
                 "device_api_host",
                 "device_api_unified_ir",
+                "kernel",
                 "p2p",
                 "rma",
                 "runner",
                 "service",
                 "symmem",
+                "topo",
             ],
             "ppu": [
                 "adaptor",

@@ -19,11 +19,8 @@ export FLAGCX_CI_MPIRUN="$(cd "$(dirname "${BASH_SOURCE[0]}")/../ci" && pwd)/run
 FLAGCX_CI_PROJECT_MAKE_ARGS=(USE_KUNLUNXIN=1 MPI_HOME="$MPI_HOME" CCL_HOME="$CCL_HOME" DEVICE_HOME="$DEVICE_HOME" "HOST_CXXFLAGS=-include cstddef")
 FLAGCX_CI_TEST_MAKE_ARGS=(USE_KUNLUNXIN=1 MPI_HOME="$MPI_HOME" CCL_HOME="$CCL_HOME" DEVICE_HOME="$DEVICE_HOME" "HOST_CXXFLAGS=-include cstddef")
 FLAGCX_CI_ENABLE_IBUC=0
-FLAGCX_CI_ENABLE_SHARED_P2P_ENGINE=0
-# The adaptor's four GPU one-sided cases require a GDR allocation contract
-# that is not provided by the current XPU runtime. Keep the adaptor suite
-# running, but do not turn unsupported capability cases into a CI failure.
-FLAGCX_CI_REQUIRE_ADAPTOR_GPU_TESTS=0
+FLAGCX_CI_ENABLE_SHARED_P2P_ENGINE=1
+FLAGCX_CI_REQUIRE_ADAPTOR_GPU_TESTS=1
 FLAGCX_CI_INTRA_NP=4
 FLAGCX_CI_NODE_NP=4
 FLAGCX_CI_RUNNER_NP=4
@@ -31,6 +28,15 @@ export NP=4
 
 FLAGCX_CI_NODE1_MPI_ARGS=(-x FLAGCX_HOSTID=node0)
 FLAGCX_CI_NODE2_MPI_ARGS=(-x FLAGCX_HOSTID=node1)
+
+flagcx_ci_configure_suite() {
+  local suite=$1
+  if [[ "$suite" == device_api || "$suite" == device_api_unified_ir ||
+        "$suite" == kernel ]]; then
+    FLAGCX_CI_PROJECT_MAKE_ARGS+=(USE_SHMEM=1)
+    FLAGCX_CI_TEST_MAKE_ARGS+=(USE_SHMEM=1)
+  fi
+}
 
 flagcx_ci_find_xpu_toolchain() {
   local root
