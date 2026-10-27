@@ -388,6 +388,40 @@ class CiWorkflowWiringTest(unittest.TestCase):
             self.assertIn("if: always()", source)
             self.assertIn("check_platform_workflow.sh", source)
 
+    def test_kunlunxin_torch_api_job_uses_platform_config_and_hardware_runner(self):
+        workflow = yaml.safe_load(
+            (REPO_ROOT / ".github/workflows/torch-api-test.yml").read_text()
+        )
+        jobs = workflow["jobs"]
+        job = jobs["torch-api-test-kunlunxin"]
+        self.assertEqual(
+            job["if"], "contains(fromJSON(inputs.platforms), 'kunlunxin')"
+        )
+        self.assertIn(
+            "outputs.kunlunxin_runs_on",
+            job["runs-on"],
+        )
+        steps = {step.get("name"): step for step in job["steps"]}
+        run_step = steps["Run torch-api-test (kunlunxin) in configured container"]
+        self.assertEqual(
+            run_step["env"]["FLAGCX_CI_IMAGE"],
+            "${{ needs.load-hardware-container-configs.outputs.kunlunxin_ci_image }}",
+        )
+        self.assertIn("kunlunxin torch-api", run_step["run"])
+        self.assertIn("torch-api-test-kunlunxin", jobs["torch_api_complete"]["needs"])
+        self.assertIn(
+            "Validate selected KunlunXin Torch API job",
+            [step.get("name") for step in jobs["torch_api_complete"]["steps"]],
+        )
+
+        handler = (
+            REPO_ROOT / ".github/scripts/ci/run_kunlunxin_workload.sh"
+        ).read_text()
+        self.assertIn("FLAGCX_ADAPTOR=klx", handler)
+        self.assertIn("flagcx_ci_find_xpu_toolchain", handler)
+        self.assertIn("torch.cuda.device_count() >= 4", handler)
+        self.assertIn("test/script/torch_api_test.sh", handler)
+
     def test_torch_coverage_upload_is_optional_and_uses_flagcicd_contract(self):
         workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/torch-api-test.yml").read_text())
         caller = yaml.safe_load((REPO_ROOT / ".github/workflows/unit-test.yml").read_text())
