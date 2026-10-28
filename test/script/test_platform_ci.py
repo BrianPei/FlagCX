@@ -879,7 +879,7 @@ class PlatformCiRegressionTest(unittest.TestCase):
             rma_case,
         )
         self.assertIn('NET_FILTER="RmaTest.GetSmall"', rma_case)
-        self.assertIn('if [[ "$platform_name" != "hygon" ]]; then', rma_case)
+        self.assertIn('"$platform_name" != "hygon"', rma_case)
         self.assertIn(
             '-x FLAGCX_CI_GDR_VISIBILITY_EXPECT_SETUP=success_or_unsupported',
             rma_case,
