@@ -84,6 +84,33 @@ flagcx_ci_run_suite_additional() {
   esac
 }
 
+flagcx_ci_run_suite_override() {
+  local suite=$1
+  local suite_dir=$2
+
+  # CANN does not expose the symmetric-memory VMM entry points. Keep the
+  # common symmem job's VMM/MR matrix out of Ascend while retaining the
+  # platform-supported unit and IPC-local coverage.
+  if [[ "$suite" != "symmem" ]]; then
+    FLAGCX_CI_RUN_SUITE_OVERRIDE_HANDLED=0
+    return
+  fi
+
+  FLAGCX_CI_RUN_SUITE_OVERRIDE_HANDLED=1
+  FLAGCX_CI_TEST_LABEL="Ascend symmem unit tests" \
+    "$TEST_RUNNER" "$suite_dir/build/bin/symmem_unit_tests"
+
+  FLAGCX_CI_MPI_LABEL="Ascend symmem IPC local" \
+    "$MPI_RUNNER" -np "${FLAGCX_CI_SYMMEM_LOCAL_NP:-2}" --allow-run-as-root \
+      -x FLAGCX_USE_HETERO_COMM=1 \
+      -x FLAGCX_CLUSTER_SPLIT_LIST=2 \
+      -x FLAGCX_MEM_ENABLE=1 \
+      -x FLAGCX_VMM_ENABLE=0 \
+      -x FLAGCX_IB_DISABLE=1 \
+      "$suite_dir/build/bin/symmem_mpi_tests" \
+      --gtest_filter=-SymMemTest.CrossGpuReadViaPeerPtr:SymMemTest.CrossGpuWriteViaPeerPtr:SymMemTest.HybridLocalAndRemoteAccess
+}
+
 flagcx_ci_prepare() {
   local suite=$1
   echo "Preparing Ascend environment for CI workload: $suite"

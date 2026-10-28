@@ -696,6 +696,17 @@ class PlatformCiRegressionTest(unittest.TestCase):
             self.assertIn(f"test/unittest/{suite_dir}", ascend_env)
         self.assertIn("flagcx_ci_build_suite_additional", ascend_env)
         self.assertIn("flagcx_ci_run_suite_additional", ascend_env)
+        self.assertIn("flagcx_ci_run_suite_override", ascend_env)
+        self.assertIn("CANN does not expose the symmetric-memory VMM", ascend_env)
+        ascend_symmem_override = ascend_env[
+            ascend_env.index("flagcx_ci_run_suite_override() {") :
+            ascend_env.index("flagcx_ci_prepare() {")
+        ]
+        self.assertIn('"$suite" != "symmem"', ascend_symmem_override)
+        self.assertIn('FLAGCX_CI_RUN_SUITE_OVERRIDE_HANDLED=1', ascend_symmem_override)
+        self.assertIn('"$suite_dir/build/bin/symmem_unit_tests"', ascend_symmem_override)
+        self.assertIn('-x FLAGCX_VMM_ENABLE=0', ascend_symmem_override)
+        self.assertNotIn('FLAGCX_CI_REQUIRE_VMM=1', ascend_symmem_override)
 
         for workflow_name in (
             "test.yml",
@@ -731,6 +742,31 @@ class PlatformCiRegressionTest(unittest.TestCase):
         self.assertIn("unset FLAGCX_SKIP_HETERO", hygon_handler)
         self.assertIn("metax torch-api", torch_workflow)
         self.assertNotIn("export FLAGCX_USE_HETERO_COMM", metax_handler)
+
+    def test_ascend_symmem_override_runs_supported_tests_without_vmm(self):
+        result = subprocess.run(
+            [
+                os.environ.get("BASH", "bash"),
+                "-c",
+                'source "$1"; TEST_RUNNER=echo MPI_RUNNER=echo; '
+                'flagcx_ci_run_suite_override symmem test/unittest/symmem; '
+                'printf "handled=%s\\n" "$FLAGCX_CI_RUN_SUITE_OVERRIDE_HANDLED"',
+                "bash",
+                ".github/scripts/set_env/ascend.sh",
+            ],
+            cwd=REPO_ROOT,
+            env={**os.environ, "BASH_ENV": ""},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("symmem_unit_tests", result.stdout)
+        self.assertIn("symmem_mpi_tests", result.stdout)
+        self.assertIn("FLAGCX_VMM_ENABLE=0", result.stdout)
+        self.assertNotIn("FLAGCX_CI_REQUIRE_VMM=1", result.stdout)
+        self.assertIn("handled=1", result.stdout)
 
     def test_perf_and_torch_jobs_use_platform_configured_images(self):
         perf_workflow = (REPO_ROOT / ".github/workflows/test.yml").read_text()
