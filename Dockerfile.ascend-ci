@@ -6,5 +6,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ibverbs-providers \
         libibverbs-dev \
-        libibverbs1 && \
+        libibverbs1 \
+        libopenmpi-dev \
+        openmpi-bin && \
     rm -rf /var/lib/apt/lists/*
