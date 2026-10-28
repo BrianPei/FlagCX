@@ -6,6 +6,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ascend-unit-tests-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   unit_tests:
     uses: ./.github/workflows/unit_tests_common.yml
