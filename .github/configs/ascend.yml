@@ -11,7 +11,7 @@ paths_watch:
   - flagcx/adaptor/ccl/hccl_adaptor.cc
   - makefiles/ascend.mk
   - test/unittest/adaptor/net_test_utils.h
-ci_image: harbor.baai.ac.cn/flagos-dev/flagcx:asend-dev-fixed-20261028
+ci_image: harbor.baai.ac.cn/flagos-dev/flagcx:asend-dev-fixed-20261016
 runner_labels:
   - flagcicd-910c
 docker_volumes:
