@@ -58,10 +58,19 @@ flagcx_ci_find_xpu_toolchain() {
 
 flagcx_ci_build_suite_override() {
   local suite=$1
-  if [[ ( "$suite" == device_api || "$suite" == device_api_unified_ir ) &&
-        "${FLAGCX_CI_XPU_TOOLCHAIN_AVAILABLE:-0}" != 1 ]]; then
+  local requires_shmem=0
+  case "$suite" in
+    device_api|device_api_unified_ir|kernel) requires_shmem=1 ;;
+  esac
+
+  if ((requires_shmem != 0)) &&
+     [[ "${FLAGCX_CI_XPU_TOOLCHAIN_AVAILABLE:-0}" != 1 ]]; then
     FLAGCX_CI_BUILD_SUITE_OVERRIDE_HANDLED=1
     echo "Skipping $suite: XTDK clang++ and xpu/kernel/xtdk.h are not present in the CI image"
+  elif ((requires_shmem != 0)) &&
+       [[ ! -f "$CCL_HOME/include/xshmem/xshmem.h" ]]; then
+    FLAGCX_CI_BUILD_SUITE_OVERRIDE_HANDLED=1
+    echo "Skipping $suite: XSHMEM headers are not present under $CCL_HOME/include"
   else
     FLAGCX_CI_BUILD_SUITE_OVERRIDE_HANDLED=0
   fi

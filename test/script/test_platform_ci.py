@@ -27,7 +27,10 @@ class PlatformCiRegressionTest(unittest.TestCase):
         self.assertIn("FLAGCX_CI_ENABLE_SHARED_P2P_ENGINE=1", env_script)
         self.assertIn("FLAGCX_CI_PROJECT_MAKE_ARGS+=(USE_SHMEM=1)", env_script)
         self.assertIn("FLAGCX_CI_TEST_MAKE_ARGS+=(USE_SHMEM=1)", env_script)
+        self.assertIn('[[ ! -f "$CCL_HOME/include/xshmem/xshmem.h" ]]', env_script)
+        self.assertIn('"$suite" == kernel', env_script)
         self.assertIn("Skipping KunlunXin GDR visibility conformance", runner)
+        self.assertIn('flagcx_ci_build_suite_override "$SUITE"', runner)
         self.assertIn("Skipping $platform_name VMM + NET data tests", runner)
         self.assertIn('    device)', runner)
         self.assertIn('    topo)', runner)
@@ -850,7 +853,10 @@ class PlatformCiRegressionTest(unittest.TestCase):
             rma_case,
         )
         self.assertIn('NET_FILTER="RmaTest.GetSmall"', rma_case)
-        self.assertIn('if [[ "$platform_name" != "hygon" ]]; then', rma_case)
+        self.assertIn(
+            'if ((run_visibility != 0)) && [[ "$platform_name" != "hygon" ]]; then',
+            rma_case,
+        )
         self.assertIn(
             '-x FLAGCX_CI_GDR_VISIBILITY_EXPECT_SETUP=success_or_unsupported',
             rma_case,
@@ -926,7 +932,7 @@ class PlatformCiRegressionTest(unittest.TestCase):
         ).read_text()
 
         self.assertIn(
-            'adaptor|p2p|rma|runner|symmem|device_api|device_api_unified_ir)',
+            'adaptor|p2p|rma|runner|symmem|topo|device_api|device_api_unified_ir)',
             unit_runner,
         )
         self.assertIn('FLAGCX_CI_MPI_LABEL="symmem IPC local"', symmem_runner)
@@ -965,8 +971,7 @@ class PlatformCiRegressionTest(unittest.TestCase):
         )
         self.assertIn("local symmem_run_vmm_net_data=1", unit_runner)
         self.assertIn(
-            'if [[ "$platform_name" == "ppu" || '
-            '"$platform_name" == "hygon" ]]',
+            '"$platform_name" == "kunlunxin"',
             unit_runner,
         )
         self.assertIn(

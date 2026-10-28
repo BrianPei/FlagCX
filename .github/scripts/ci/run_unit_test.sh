@@ -82,6 +82,16 @@ flagcx_ci_require_rdma() {
 if declare -F flagcx_ci_prepare >/dev/null; then
   flagcx_ci_prepare "$SUITE"
 fi
+
+if declare -F flagcx_ci_build_suite_override >/dev/null; then
+  FLAGCX_CI_BUILD_SUITE_OVERRIDE_HANDLED=0
+  flagcx_ci_build_suite_override "$SUITE"
+  if [[ "$FLAGCX_CI_BUILD_SUITE_OVERRIDE_HANDLED" == 1 ]]; then
+    echo "SKIPPED $SUITE: required KunlunXin device toolchain or XSHMEM headers are unavailable"
+    exit 0
+  fi
+fi
+
 # RMA has separate IPC and network invocations. Its RDMA preflight runs only
 # before the network invocation so missing RDMA cannot hide IPC regressions.
 if [[ "$SUITE" != rma ]]; then
