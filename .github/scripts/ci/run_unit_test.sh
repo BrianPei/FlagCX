@@ -506,6 +506,12 @@ run_suite() {
             # DU uses the existing RMA correctness tests. No separate device
             # consumer kernel is built for this platform.
             ;;
+          ascend)
+            # CANN has no stream wait/write-value support, and the RMA
+            # device-consumer kernel is not built for Ascend. Keep the
+            # platform's IPC/NET correctness runs without this conformance
+            # matrix.
+            ;;
           ppu)
             # BAREX intentionally retains a temporary no-op/NONE policy. The
             # READ consumer runs; WRITE records a capability note if BAREX
@@ -535,7 +541,8 @@ run_suite() {
             -x FLAGCX_CI_EXPECT_GDR_WRITE_REQUIRED="$expected_write_required"
           )
         fi
-        if [[ "$platform_name" != "hygon" ]]; then
+        if [[ "$platform_name" != "hygon" &&
+              "$platform_name" != "ascend" ]]; then
           FLAGCX_CI_MPI_LABEL="rma GDR visibility ordinary" \
             make -C "$suite_dir" run-mpi-net "${args[@]}" \
             MPIRUN="$MPI_RUNNER" NET_FILTER="$visibility_filter" \

@@ -1767,6 +1767,17 @@ class PlatformCiRegressionTest(unittest.TestCase):
                 "FLAGCX_P2P_DISABLE=1", configure, platform
             )
 
+        unit_runner = (
+            REPO_ROOT / ".github/scripts/ci/run_unit_test.sh"
+        ).read_text()
+        rma_case = unit_runner[
+            unit_runner.index("    rma)\n") :
+            unit_runner.index("    runner)\n")
+        ]
+        self.assertIn("          ascend)", rma_case)
+        self.assertIn('"$platform_name" != "ascend"', rma_case)
+        self.assertIn("CANN has no stream wait/write-value support", rma_case)
+
     def test_rma_registration_failure_runs_in_two_rank_network_ci(self):
         rma_makefile = (
             REPO_ROOT / "test/unittest/rma/Makefile"
