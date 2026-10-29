@@ -53,7 +53,11 @@ endif
 
 all: $(ALL_TARGETS)
 
+ifneq ($(UNIT_SRCS),)
 unit: $(UNIT_TARGET)
+else
+unit:
+endif
 
 mpi: $(MPI_TARGET)
 
@@ -66,10 +70,12 @@ endif
 device-api-obj:
 	@$(MAKE) -C $(KERNEL_DIR) $(DEVICE_API_TARGETS)
 
+ifneq ($(UNIT_SRCS),)
 $(UNIT_TARGET): $(UNIT_OBJS)
 	@mkdir -p $(BINDIR)
 	@echo "Linking   $@"
 	@$(CXX) $^ -o $@ $(FLAGCX_LINK) $(GTEST_LINK)
+endif
 
 $(MPI_TARGET): device-api-obj $(MPI_OBJS)
 	@mkdir -p $(BINDIR)
@@ -89,8 +95,13 @@ $(OBJDIR)/%.o: %.cpp
 clean:
 	@rm -rf $(BUILDDIR)
 
+ifneq ($(UNIT_SRCS),)
 run-unit: $(UNIT_TARGET)
 	@$(UNIT_TARGET)
+else
+run-unit:
+	@echo "No unit tests found in kernel"
+endif
 
 run-mpi: $(MPI_TARGET)
 	@$(HETERO_ENV) mpirun --allow-run-as-root -np 4 $(MPI_TARGET)

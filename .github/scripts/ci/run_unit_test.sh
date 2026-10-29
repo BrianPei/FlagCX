@@ -911,4 +911,13 @@ esac
 
 build_project
 build_suite
-run_suite
+set +e
+(
+  set -e
+  run_suite
+)
+suite_status=$?
+set -e
+if ((suite_status != 0)); then
+  exit "$suite_status"
+fi

@@ -123,6 +123,23 @@ class PlatformCiRegressionTest(unittest.TestCase):
         )
         self.assertTrue(unit_link_line.startswith("g++ "))
 
+        device_api_unit_result = subprocess.run(
+            [
+                "make", "-n", "-B", "-C",
+                str(REPO_ROOT / "test/unittest/device_api"),
+                "unit", "USE_DU=1", "USE_SHCA=1",
+                "DEVICE_HOME=/opt/dtk", "CCL_HOME=/opt/dtk",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        device_api_unit_link = next(
+            line for line in device_api_unit_result.stdout.splitlines()
+            if "/bin/test_deviceptr_args " in line
+        )
+        self.assertTrue(device_api_unit_link.startswith("g++ "))
+
         kernel_result = subprocess.run(
             [
                 "make", "-n", "-B", "-C",
@@ -134,11 +151,6 @@ class PlatformCiRegressionTest(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        kernel_unit_link = next(
-            line for line in kernel_result.stdout.splitlines()
-            if "/bin/kernel_unit_tests " in line
-        )
-        self.assertTrue(kernel_unit_link.startswith("g++ "))
         kernel_mpi_link = next(
             line for line in kernel_result.stdout.splitlines()
             if "/bin/kernel_mpi_tests " in line
@@ -695,15 +707,19 @@ class PlatformCiRegressionTest(unittest.TestCase):
         self.assertIn("FLAGCX_CI_NODE2_MPI_ARGS=(", ascend_env)
         self.assertNotIn("flagcx_ci_build_suite_additional", ascend_env)
         self.assertNotIn("flagcx_ci_run_suite_additional", ascend_env)
-        self.assertTrue(
+        self.assertFalse(
             (REPO_ROOT / "test/unittest/core/test_p2p_topo.cpp").exists()
+        )
+        self.assertTrue(
+            (REPO_ROOT / "test/unittest/topo/test_p2p_topo.cpp").exists()
+        )
+        self.assertTrue(
+            (REPO_ROOT / "test/unittest/device_api/test_deviceptr_args.cpp").exists()
         )
         self.assertTrue(
             (REPO_ROOT / "test/unittest/device_api/kernel/Makefile").exists()
         )
         self.assertFalse((REPO_ROOT / "test/unittest/device").exists())
-        self.assertFalse((REPO_ROOT / "test/unittest/topo").exists())
-        self.assertFalse((REPO_ROOT / "test/unittest/kernel").exists())
         self.assertIn("flagcx_ci_run_suite_override", ascend_env)
         self.assertIn("CANN does not expose the symmetric-memory VMM", ascend_env)
         ascend_symmem_override = ascend_env[
@@ -1945,6 +1961,76 @@ class PlatformCiRegressionTest(unittest.TestCase):
             / "test/unittest/device_api/test_device_api_inter.cpp"
         ).read_text()
         self.assertIn("usleep(100000)", device_api_test)
+
+    def test_device_api_host_wires_deviceptr_args(self):
+        device_api_dir = REPO_ROOT / "test/unittest/device_api"
+        result = subprocess.run(
+            ["make", "-n", "-C", str(device_api_dir), "run-unit", "USE_NVIDIA=1"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("test_deviceptr_args.cpp", result.stdout)
+        self.assertIn("build/bin/test_deviceptr_args", result.stdout)
+
+    def test_device_api_wires_kernel_mpi(self):
+        device_api_dir = REPO_ROOT / "test/unittest/device_api"
+        result = subprocess.run(
+            ["make", "-n", "-C", str(device_api_dir), "mpi", "USE_NVIDIA=1"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("kernel_mpi_tests", result.stdout)
+
+        run_unit = (REPO_ROOT / ".github/scripts/ci/run_unit_test.sh").read_text()
+        self.assertIn("kernel/build/bin/kernel_mpi_tests", run_unit)
+
+    def test_runner_propagates_intermediate_command_failure(self):
+        run_unit = (REPO_ROOT / ".github/scripts/ci/run_unit_test.sh").read_text()
+        self.assertNotIn("run_suite || suite_status=$?", run_unit)
+        self.assertIn("set +e", run_unit)
+        self.assertIn("run_suite", run_unit)
+        self.assertIn('if ((suite_status != 0)); then', run_unit)
+
+        subshell_script = (
+            "failing_func() {\n"
+            "  false\n"
+            "  true\n"
+            "}\n"
+            "set +e\n"
+            "(\n"
+            "  set -e\n"
+            "  failing_func\n"
+            ")\n"
+            "suite_status=$?\n"
+            "set -e\n"
+            'printf "%d" "$suite_status"\n'
+        )
+        res_subshell = subprocess.run(
+            ["bash", "-c", subshell_script],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(res_subshell.stdout.strip(), "1")
+
+        swallow_script = (
+            "failing_func() {\n"
+            "  false\n"
+            "  true\n"
+            "}\n"
+            "suite_status=0\n"
+            "failing_func || suite_status=$?\n"
+            'printf "%d" "$suite_status"\n'
+        )
+        res_swallow = subprocess.run(
+            ["bash", "-c", swallow_script],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(res_swallow.stdout.strip(), "0")
 
 
 class MetaXEnvironmentTest(unittest.TestCase):
