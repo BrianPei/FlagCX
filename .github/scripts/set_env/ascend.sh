@@ -12,7 +12,7 @@ export DEVICE_HOME=${DEVICE_HOME:-/usr/local/Ascend/ascend-toolkit/latest}
 export CCL_HOME=${CCL_HOME:-$DEVICE_HOME}
 export MPI_HOME=${MPI_HOME:-/usr/local/mpi}
 export PATH="$DEVICE_HOME/bin:${PATH:-}"
-export LD_LIBRARY_PATH="$DEVICE_HOME/lib64:/usr/local/Ascend/driver/lib64:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="$DEVICE_HOME/lib64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/dcmi:${LD_LIBRARY_PATH:-}"
 
 FLAGCX_CI_PROJECT_MAKE_ARGS=(USE_ASCEND=1)
 FLAGCX_CI_TEST_MAKE_ARGS=(USE_ASCEND=1)
@@ -37,7 +37,7 @@ FLAGCX_CI_NODE2_MPI_ARGS=(
 
 flagcx_ci_configure_suite() {
   case "$1" in
-    core|adaptor|device_api_host|p2p|rma|runner|service|symmem) ;;
+    core|adaptor|device_api_host|topo|p2p|rma|runner|service|symmem) ;;
     *) echo "Ascend CI does not enable suite: $1" >&2; return 1 ;;
   esac
 }

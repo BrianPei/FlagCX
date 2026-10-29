@@ -634,6 +634,7 @@ class PlatformCiRegressionTest(unittest.TestCase):
                 "core",
                 "adaptor",
                 "device_api_host",
+                "topo",
                 "p2p",
                 "rma",
                 "runner",
@@ -715,6 +716,7 @@ class PlatformCiRegressionTest(unittest.TestCase):
         self.assertTrue(
             (REPO_ROOT / "test/unittest/topo/test_p2p_topo.cpp").exists()
         )
+        self.assertIn("device_api_host|topo|p2p", ascend_env)
         self.assertTrue(
             (REPO_ROOT / "test/unittest/device_api/test_deviceptr_args.cpp").exists()
         )
@@ -981,7 +983,7 @@ class PlatformCiRegressionTest(unittest.TestCase):
         ).read_text()
 
         self.assertIn(
-            'adaptor|p2p|rma|runner|symmem|device_api|device_api_unified_ir)',
+            'adaptor|topo|p2p|rma|runner|symmem|device_api|device_api_unified_ir)',
             unit_runner,
         )
         self.assertIn('FLAGCX_CI_MPI_LABEL="symmem IPC local"', symmem_runner)
