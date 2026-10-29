@@ -42,48 +42,6 @@ flagcx_ci_configure_suite() {
   esac
 }
 
-flagcx_ci_build_suite_additional() {
-  local suite=$1
-  local -a args=("${FLAGCX_CI_TEST_MAKE_ARGS[@]}")
-  case "$suite" in
-    adaptor)
-      make -C "$PROJECT_ROOT/test/unittest/device" --jobs="$(nproc)" \
-        all "${args[@]}"
-      ;;
-    device_api_host)
-      make -C "$PROJECT_ROOT/test/unittest/kernel" --jobs="$(nproc)" \
-        "$PROJECT_ROOT/test/unittest/kernel/build/bin/kernel_unit_tests" \
-        "${args[@]}"
-      ;;
-    core)
-      make -C "$PROJECT_ROOT/test/unittest/topo" --jobs="$(nproc)" \
-        all "${args[@]}"
-      ;;
-  esac
-}
-
-flagcx_ci_run_suite_additional() {
-  local suite=$1
-  local -a args=("${FLAGCX_CI_TEST_MAKE_ARGS[@]}")
-  case "$suite" in
-    adaptor)
-      FLAGCX_CI_TEST_LABEL="Ascend device tests (adaptor suite)" \
-        "$TEST_RUNNER" make -C "$PROJECT_ROOT/test/unittest/device" run \
-        "${args[@]}"
-      ;;
-    device_api_host)
-      FLAGCX_CI_TEST_LABEL="Ascend kernel host tests (device_api_host suite)" \
-        "$TEST_RUNNER" make -C "$PROJECT_ROOT/test/unittest/kernel" run-unit \
-        "${args[@]}"
-      ;;
-    core)
-      FLAGCX_CI_TEST_LABEL="Ascend topology tests (core suite)" \
-        "$TEST_RUNNER" make -C "$PROJECT_ROOT/test/unittest/topo" run-unit \
-        "${args[@]}"
-      ;;
-  esac
-}
-
 flagcx_ci_run_suite_override() {
   local suite=$1
   local suite_dir=$2

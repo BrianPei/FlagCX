@@ -125,7 +125,8 @@ class PlatformCiRegressionTest(unittest.TestCase):
 
         kernel_result = subprocess.run(
             [
-                "make", "-n", "-B", "-C", str(REPO_ROOT / "test/unittest/kernel"),
+                "make", "-n", "-B", "-C",
+                str(REPO_ROOT / "test/unittest/device_api/kernel"),
                 "all", "USE_DU=1", "USE_SHCA=1",
                 "DEVICE_HOME=/opt/dtk", "CCL_HOME=/opt/dtk",
             ],
@@ -692,10 +693,17 @@ class PlatformCiRegressionTest(unittest.TestCase):
         self.assertIn("FLAGCX_CI_ENABLE_PXN=0", ascend_env)
         self.assertIn("FLAGCX_CI_NODE1_MPI_ARGS=(", ascend_env)
         self.assertIn("FLAGCX_CI_NODE2_MPI_ARGS=(", ascend_env)
-        for suite_dir in ("device", "kernel", "topo"):
-            self.assertIn(f"test/unittest/{suite_dir}", ascend_env)
-        self.assertIn("flagcx_ci_build_suite_additional", ascend_env)
-        self.assertIn("flagcx_ci_run_suite_additional", ascend_env)
+        self.assertNotIn("flagcx_ci_build_suite_additional", ascend_env)
+        self.assertNotIn("flagcx_ci_run_suite_additional", ascend_env)
+        self.assertTrue(
+            (REPO_ROOT / "test/unittest/core/test_p2p_topo.cpp").exists()
+        )
+        self.assertTrue(
+            (REPO_ROOT / "test/unittest/device_api/kernel/Makefile").exists()
+        )
+        self.assertFalse((REPO_ROOT / "test/unittest/device").exists())
+        self.assertFalse((REPO_ROOT / "test/unittest/topo").exists())
+        self.assertFalse((REPO_ROOT / "test/unittest/kernel").exists())
         self.assertIn("flagcx_ci_run_suite_override", ascend_env)
         self.assertIn("CANN does not expose the symmetric-memory VMM", ascend_env)
         ascend_symmem_override = ascend_env[

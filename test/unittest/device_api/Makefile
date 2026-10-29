@@ -116,7 +116,7 @@ endif
 
 MPI_TARGETS := $(IR_TARGETS) $(API_TARGETS)
 
-.PHONY: all unit mpi clean run-unit run-mpi run-mpi-intra run-mpi-inter \
+.PHONY: all unit kernel-unit mpi kernel-mpi clean run-unit run-mpi run-mpi-intra run-mpi-inter \
         run-mpi-unified-intra run-mpi-unified-inter run
 
 all: unit mpi
@@ -124,9 +124,15 @@ ifneq ($(SKIPPED_TARGETS),)
 	@echo "Skipped unsupported targets on $(KERNEL_PLATFORM): $(SKIPPED_TARGETS)"
 endif
 
-unit: $(UNIT_TARGET)
+unit: $(UNIT_TARGET) kernel-unit
 
-mpi: $(MPI_TARGETS)
+kernel-unit:
+	@$(MAKE) -C kernel unit
+
+mpi: $(MPI_TARGETS) kernel-mpi
+
+kernel-mpi:
+	@$(MAKE) -C kernel mpi
 
 # Build device kernel objects via dispatcher
 KERNEL_API_TARGETS := device_api.o
@@ -200,6 +206,7 @@ clean:
 
 run-unit: unit
 	@$(UNIT_TARGET)
+	@$(MAKE) -C kernel run-unit
 
 # Env vars for inter-node testing on single node
 HETERO_ENV := $(MPI_ENV_FLAG) FLAGCX_USE_HETERO_COMM=1 \

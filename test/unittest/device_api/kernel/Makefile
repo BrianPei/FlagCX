@@ -1,4 +1,4 @@
-include ../../make.inc
+include ../../../make.inc
 
 # Local include directories for test fixtures
 LOCAL_INCLUDE := -I$(abspath include)
@@ -40,7 +40,7 @@ MPI_SRCS   := $(wildcard coll_*.cpp) flagcx_kernel_test.cpp deviceapi_test.cpp m
 MPI_OBJS   := $(MPI_SRCS:%.cpp=$(OBJDIR)/%.o)
 MPI_TARGET := $(BINDIR)/kernel_mpi_tests
 
-.PHONY: all clean run-unit run-mpi run device-api-obj
+.PHONY: all unit mpi clean run-unit run-mpi run device-api-obj
 
 # Only build targets that have sources
 ALL_TARGETS :=
@@ -52,6 +52,10 @@ ALL_TARGETS += $(MPI_TARGET)
 endif
 
 all: $(ALL_TARGETS)
+
+unit: $(UNIT_TARGET)
+
+mpi: $(MPI_TARGET)
 
 # Build device_api.o (and dlink_api.o if USE_SHMEM) from test/kernel/
 DEVICE_API_TARGETS := device_api.o

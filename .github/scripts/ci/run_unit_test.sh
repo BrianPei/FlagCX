@@ -179,6 +179,10 @@ run_device_api() {
     build/bin/test_device_ir_inter "${flags[@]}" \
     : -np "$FLAGCX_CI_NODE_NP" "${common_env[@]}" "${FLAGCX_CI_NODE2_MPI_ARGS[@]}" \
     build/bin/test_device_ir_inter "${flags[@]}"
+
+  FLAGCX_CI_MPI_LABEL="device_api kernel collective tests" \
+    "$MPI_RUNNER" -np "$FLAGCX_CI_INTRA_NP" --allow-run-as-root \
+    "${common_env[@]}" kernel/build/bin/kernel_mpi_tests
 }
 
 run_device_api_unified_ir() {
@@ -394,10 +398,6 @@ run_suite() {
       fi
       ;;
     core|service)
-      FLAGCX_CI_TEST_LABEL="$SUITE unit tests" \
-        "$TEST_RUNNER" make -C "$suite_dir" run-unit "${args[@]}"
-      ;;
-    kernel|topo)
       FLAGCX_CI_TEST_LABEL="$SUITE unit tests" \
         "$TEST_RUNNER" make -C "$suite_dir" run-unit "${args[@]}"
       ;;
@@ -898,7 +898,7 @@ run_suite() {
 }
 
 case "$SUITE" in
-  adaptor|core|device|device_api_host|kernel|p2p|rma|runner|service|symmem|topo)
+  adaptor|core|device_api_host|p2p|rma|runner|service|symmem)
     build_googletest
     ;;
   device_api|device_api_unified_ir)
@@ -911,18 +911,4 @@ esac
 
 build_project
 build_suite
-if declare -F flagcx_ci_build_suite_additional >/dev/null; then
-  flagcx_ci_build_suite_additional "$SUITE"
-fi
-if declare -F flagcx_ci_run_suite_additional >/dev/null; then
-  suite_status=0
-  additional_status=0
-  run_suite || suite_status=$?
-  flagcx_ci_run_suite_additional "$SUITE" || additional_status=$?
-  if ((suite_status != 0 || additional_status != 0)); then
-    echo "Suite failures: primary=$suite_status additional=$additional_status" >&2
-    exit 1
-  fi
-else
-  run_suite
-fi
+run_suite
