@@ -898,10 +898,8 @@ run_suite() {
 }
 
 case "$SUITE" in
-  adaptor|core|device_api_host|p2p|rma|runner|service|symmem)
+  adaptor|core|device_api|device_api_host|device_api_unified_ir|p2p|rma|runner|service|symmem)
     build_googletest
-    ;;
-  device_api|device_api_unified_ir)
     ;;
   *)
     echo "Unsupported unit test suite: $SUITE" >&2

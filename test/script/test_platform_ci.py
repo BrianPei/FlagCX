@@ -1985,6 +1985,9 @@ class PlatformCiRegressionTest(unittest.TestCase):
 
         run_unit = (REPO_ROOT / ".github/scripts/ci/run_unit_test.sh").read_text()
         self.assertIn("kernel/build/bin/kernel_mpi_tests", run_unit)
+        idx = run_unit.rindex('case "$SUITE" in')
+        googletest_branch = run_unit[idx : run_unit.index("build_project", idx)]
+        self.assertIn("device_api|", googletest_branch)
 
     def test_runner_propagates_intermediate_command_failure(self):
         run_unit = (REPO_ROOT / ".github/scripts/ci/run_unit_test.sh").read_text()
