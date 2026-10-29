@@ -29,11 +29,6 @@ $(DEVICE_COMPONENTS):
 	$(error $@ tests require COMPILE_KERNEL=1)
 endif
 
-ifneq ($(COMPILE_KERNEL), 1)
-$(DEVICE_COMPONENTS):
-	$(error $@ tests require COMPILE_KERNEL=1)
-endif
-
 clean:
 	@for comp in $(COMPONENTS); do $(MAKE) -C $$comp clean; done
 
