@@ -160,6 +160,8 @@ class PlatformCiRegressionTest(unittest.TestCase):
         self.assertIn("-no-pie", kernel_mpi_link)
         self.assertIn("/du/build/obj/device_api.o", kernel_mpi_link)
         self.assertNotIn(".cpp", kernel_mpi_link)
+        self.assertIn("-lgtest", kernel_mpi_link)
+        self.assertNotIn("-lgtest_main", kernel_mpi_link)
 
         perf_result = subprocess.run(
             [

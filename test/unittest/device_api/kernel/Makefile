@@ -80,7 +80,7 @@ endif
 $(MPI_TARGET): device-api-obj $(MPI_OBJS)
 	@mkdir -p $(BINDIR)
 	@echo "Linking   $@"
-	@$(MPI_LINKER) $(MPI_LINK_FLAGS) $(MPI_OBJS) $(DEVICE_API_OBJ) $(DLINK_OBJ) -o $@ $(FLAGCX_LINK) $(GTEST_LINK) $(MPI_LINK) $(DEVICE_LINK)
+	@$(MPI_LINKER) $(MPI_LINK_FLAGS) $(MPI_OBJS) $(DEVICE_API_OBJ) $(DLINK_OBJ) -o $@ $(FLAGCX_LINK) $(GTEST_BASE_LINK) $(MPI_LINK) $(DEVICE_LINK)
 
 $(OBJDIR)/test_%.o: test_%.cpp
 	@mkdir -p $(OBJDIR)
