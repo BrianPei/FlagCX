@@ -511,12 +511,39 @@ class PlatformCiRegressionTest(unittest.TestCase):
         self.assertIn("IbucRetransmissionTest.*", adaptor_case)
         self.assertIn("FLAGCX_IB_QPS_PER_CONNECTION=2", adaptor_case)
         self.assertIn("FLAGCX_IBUC_SPLIT_DATA_ON_QPS=1", adaptor_case)
+
         self.assertIn("FLAGCX_CI_EXPECT_NET_ADAPTOR=IBUC", unit_runner)
         self.assertNotIn('FLAGCX_CI_MPI_LABEL="IBUC forced NET runner"', unit_runner)
 
         hygon_env = HYGON_ENV.read_text()
         self.assertNotIn("FLAGCX_CI_ENABLE_IBUC=1", hygon_env)
         self.assertNotIn("FLAGCX_CI_IBUC_ENV=(", hygon_env)
+
+    def test_cuda_enables_nvidia_symmem_and_rma_coverage(self):
+        cuda_config = (REPO_ROOT / ".github/configs/cuda.yml").read_text()
+        cuda_env = (
+            REPO_ROOT / ".github/scripts/set_env/cuda.sh"
+        ).read_text()
+        symmem_runner = (
+            REPO_ROOT / "test/script/symmem_test.sh"
+        ).read_text()
+        unit_runner = (
+            REPO_ROOT / ".github/scripts/ci/run_unit_test.sh"
+        ).read_text()
+
+        self.assertIn("export FLAGCX_ADAPTOR=nvidia", cuda_env)
+        suites = cuda_config[cuda_config.index("unit_test_suites:") :]
+        self.assertIn("  - rma", suites)
+        self.assertIn("  - symmem", suites)
+        self.assertIn("nvidia|metax|ppu)", symmem_runner)
+        self.assertIn("nvidia|du|metax|ppu)", symmem_runner)
+        self.assertIn(
+            "SymMemTest.SegmentedVmmSubrangeMapsOnlyTouchedSegment",
+            symmem_runner,
+        )
+        self.assertIn("SymMemTest.UntrackedVmmMappingIsRejected", symmem_runner)
+        self.assertIn('if [[ "$platform_name" == "cuda" ]]; then', unit_runner)
+        self.assertIn('FLAGCX_CI_MPI_LABEL="rma GDR visibility VMM $route"', unit_runner)
 
     def test_ibuc_retransmission_is_separate_from_data_receive_queues(self):
         common = (
