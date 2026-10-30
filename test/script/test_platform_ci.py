@@ -761,7 +761,15 @@ class PlatformCiRegressionTest(unittest.TestCase):
         self.assertIn('FLAGCX_CI_RUN_SUITE_OVERRIDE_HANDLED=1', ascend_symmem_override)
         self.assertIn('"$suite_dir/build/bin/symmem_unit_tests"', ascend_symmem_override)
         self.assertIn('-x FLAGCX_VMM_ENABLE=0', ascend_symmem_override)
+        self.assertIn('Ascend symmem NET MR and fallback', ascend_symmem_override)
+        self.assertIn('FLAGCX_CI_REQUIRE_NET_MR=1', ascend_symmem_override)
+        self.assertIn('unit_status=$?', ascend_symmem_override)
+        self.assertIn('ipc_status=$?', ascend_symmem_override)
+        self.assertIn('network_status=$?', ascend_symmem_override)
         self.assertNotIn('FLAGCX_CI_REQUIRE_VMM=1', ascend_symmem_override)
+        self.assertIn('run_ascend_runner_mpi.sh', (
+            REPO_ROOT / '.github/scripts/ci/run_unit_test.sh'
+        ).read_text())
 
         for workflow_name in (
             "test.yml",

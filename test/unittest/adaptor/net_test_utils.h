@@ -6,6 +6,8 @@
 #define FLAGCX_TEST_UNITTEST_ADAPTOR_NET_TEST_UTILS_H_
 
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 #include "adaptor.h"
 #include "flagcx.h"
@@ -30,18 +32,23 @@ inline flagcxResult_t getLocalNetDevice(struct flagcxNetAdaptor *netAdaptor,
     return flagcxInternalError;
   }
 
+  const char *firstLocalDevice =
+      std::getenv("FLAGCX_CI_FORCE_FIRST_LOCAL_DEVICE");
+  const bool forceFirstLocalDevice =
+      firstLocalDevice != nullptr && std::strcmp(firstLocalDevice, "1") == 0;
+  const bool pciTopologyAvailable =
+      deviceAdaptor != nullptr && deviceAdaptor->getDevicePciBusId != nullptr &&
+      deviceAdaptor->getDeviceByPciBusId != nullptr;
   int gpuDev = 0;
-  result = deviceHandle->getDevice(&gpuDev);
-  if (result != flagcxSuccess) {
-    flagcxDeviceHandleFree(deviceHandle);
-    return result;
+  if (pciTopologyAvailable && !forceFirstLocalDevice) {
+    result = deviceHandle->getDevice(&gpuDev);
+    if (result != flagcxSuccess) {
+      flagcxDeviceHandleFree(deviceHandle);
+      return result;
+    }
   }
 
-  // CANN currently has no PCI bus-ID callbacks, so PCI-based GPU/NIC
-  // proximity cannot be computed. The loopback tests only need a valid local
-  // device pair; select the first visible NPU and NIC in that case.
-  if (deviceAdaptor == nullptr || deviceAdaptor->getDevicePciBusId == nullptr ||
-      deviceAdaptor->getDeviceByPciBusId == nullptr) {
+  if (!pciTopologyAvailable || forceFirstLocalDevice) {
     int gpuCount = 0;
     result = deviceHandle->getDeviceCount(&gpuCount);
     if (result == flagcxSuccess && gpuCount > 0) {
@@ -57,9 +64,8 @@ inline flagcxResult_t getLocalNetDevice(struct flagcxNetAdaptor *netAdaptor,
     if (result == flagcxSuccess && selectedGpu != nullptr)
       *selectedGpu = gpuDev;
     if (result == flagcxSuccess)
-      fprintf(stderr,
-              "Adaptor tests selected first local NPU/NIC; PCI topology "
-              "callbacks are unavailable.\n");
+      fprintf(stderr, "Adaptor tests selected first local accelerator/NIC; "
+                      "PCI proximity is unavailable or disabled.\n");
     return result;
   }
 

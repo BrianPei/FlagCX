@@ -285,6 +285,9 @@ run_suite() {
       local ipc_status=0
       local geometry_status=0
       local gpu_result_xml="$suite_dir/build/adaptor_gpu_results.xml"
+      if [[ "$(basename "$SET_ENV_SCRIPT" .sh)" == ascend ]]; then
+        export FLAGCX_CI_FORCE_FIRST_LOCAL_DEVICE=1
+      fi
       rm -f "$gpu_result_xml"
       # Build more than one RC QP in every RDMA adaptor job. The current
       # one-sided API intentionally stays on one ordered QP until the transport
@@ -407,6 +410,10 @@ run_suite() {
       local shared_status=0
       local shared_mpi_status=0
       local p2p_mpi_env=""
+      if [[ "$(basename "$SET_ENV_SCRIPT" .sh)" == ascend ]]; then
+        export FLAGCX_CI_FORCE_FIRST_LOCAL_DEVICE=1
+        echo "Ascend P2P diagnostics: target hardware must expose an APU-to-NIC topology edge; see .github/ASCEND_CI_ISSUES.md"
+      fi
       if [[ "${FLAGCX_P2P_TRANSPORT:-ib}" == "accl" ]]; then
         p2p_mpi_env="-x FLAGCX_P2P_TRANSPORT=accl"
       fi
@@ -474,11 +481,12 @@ run_suite() {
         "$TEST_RUNNER" make -C "$suite_dir" run-unit "${args[@]}"
       ;;
     rma)
+      local unit_status=0
       local ipc_status=0
       local network_status=0
       local visibility_status=0
       FLAGCX_CI_TEST_LABEL="rma unit tests" \
-        "$TEST_RUNNER" make -C "$suite_dir" run-unit "${args[@]}"
+        "$TEST_RUNNER" make -C "$suite_dir" run-unit "${args[@]}" || unit_status=$?
       # Keep these as separate invocations so each transport has its own
       # timeout. Collect both statuses so a failure in one path cannot prevent
       # the other path from running and producing a useful result.
@@ -515,6 +523,7 @@ run_suite() {
             # device-consumer kernel is not built for Ascend. Keep the
             # platform's IPC/NET correctness runs without this conformance
             # matrix.
+            echo "Ascend coverage gap: RMA visibility requires CANN stream wait/write support and a device-consumer kernel; see .github/ASCEND_CI_ISSUES.md"
             ;;
           ppu)
             # BAREX intentionally retains a temporary no-op/NONE policy. The
@@ -636,16 +645,21 @@ run_suite() {
       else
         network_status=$?
       fi
-      if ((ipc_status != 0 || network_status != 0 || visibility_status != 0)); then
-        echo "RMA MPI failures: IPC=$ipc_status network=$network_status visibility=$visibility_status" >&2
+      if ((unit_status != 0 || ipc_status != 0 || network_status != 0 || visibility_status != 0)); then
+        echo "RMA failures: unit=$unit_status IPC=$ipc_status network=$network_status visibility=$visibility_status" >&2
         return 1
       fi
       ;;
     runner)
       : "${FLAGCX_CI_RUNNER_NP:?The platform set_env script must define FLAGCX_CI_RUNNER_NP}"
       local platform_name
+      local unit_status=0 default_status=0 hybrid_status=0 net_status=0 stripe_status=0 pxn_status=0
+      local runner_mpi_runner="$MPI_RUNNER"
       local -a runner_net_platform_env=()
       platform_name=$(basename "$SET_ENV_SCRIPT" .sh)
+      if [[ "$platform_name" == ascend ]]; then
+        runner_mpi_runner="$PROJECT_ROOT/.github/scripts/ci/run_ascend_runner_mpi.sh"
+      fi
       if [[ "$platform_name" == "hygon" ]]; then
         # A broken SHCA route otherwise consumes the default RC retry budget
         # for several minutes before the completion reports RETRY_EXC_ERR.
@@ -655,22 +669,22 @@ run_suite() {
         )
       fi
       FLAGCX_CI_TEST_LABEL="runner unit tests" \
-        "$TEST_RUNNER" make -C "$suite_dir" run-unit "${args[@]}"
+        "$TEST_RUNNER" make -C "$suite_dir" run-unit "${args[@]}" || unit_status=$?
       cd "$suite_dir"
       FLAGCX_CI_MPI_LABEL="runner default" \
-        "$MPI_RUNNER" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
+        "$runner_mpi_runner" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
         -x FLAGCX_CI_EXPECT_RUNNER_MODE=HOMO \
-        ./build/bin/runner_mpi_tests
+        ./build/bin/runner_mpi_tests || default_status=$?
       FLAGCX_CI_MPI_LABEL="runner heterogeneous" \
-        "$MPI_RUNNER" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
+        "$runner_mpi_runner" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
         -x FLAGCX_MEM_ENABLE=1 \
         -x FLAGCX_CLUSTER_SPLIT_LIST=2 \
         -x FLAGCX_P2P_DISABLE=0 \
         -x FLAGCX_CI_EXPECT_RUNNER_MODE=HYBRID \
         -x FLAGCX_CI_EXPECT_PEER_TRANSPORT=P2P \
-        ./build/bin/runner_mpi_tests
+        ./build/bin/runner_mpi_tests || hybrid_status=$?
       FLAGCX_CI_MPI_LABEL="runner forced NET" \
-        "$MPI_RUNNER" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
+        "$runner_mpi_runner" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
         -x FLAGCX_MEM_ENABLE=1 \
         -x FLAGCX_CLUSTER_SPLIT_LIST=2 \
         -x FLAGCX_P2P_DISABLE=1 \
@@ -685,9 +699,9 @@ run_suite() {
         -x FLAGCX_CI_EXPECT_COLL_MULTICHANNEL=1 \
         -x FLAGCX_CI_EXPECT_PXN=0 \
         "${runner_net_platform_env[@]}" \
-        ./build/bin/runner_mpi_tests
+        ./build/bin/runner_mpi_tests || net_status=$?
       FLAGCX_CI_MPI_LABEL="runner forced NET multi-QP striping" \
-        "$MPI_RUNNER" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
+        "$runner_mpi_runner" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
         -x FLAGCX_MEM_ENABLE=1 \
         -x FLAGCX_CLUSTER_SPLIT_LIST=2 \
         -x FLAGCX_P2P_DISABLE=1 \
@@ -704,7 +718,7 @@ run_suite() {
         -x FLAGCX_CI_RUNNER_BYTES=67108864 \
         "${runner_net_platform_env[@]}" \
         ./build/bin/runner_mpi_tests \
-        --gtest_filter=FlagCXCollTest.AlltoAll
+        --gtest_filter=FlagCXCollTest.AlltoAll || stripe_status=$?
       if [[ "${FLAGCX_CI_ENABLE_PXN:-1}" == "1" ]]; then
         local -a pxn_platform_env=()
         local -a pxn_launcher=(env)
@@ -728,7 +742,7 @@ run_suite() {
           )
         fi
         FLAGCX_CI_MPI_LABEL="runner $platform_name PXN four-rank" \
-          "${pxn_launcher[@]}" "$MPI_RUNNER" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
+          "${pxn_launcher[@]}" "$runner_mpi_runner" -np "$FLAGCX_CI_RUNNER_NP" --allow-run-as-root \
           -x FLAGCX_MEM_ENABLE=1 \
           -x FLAGCX_CLUSTER_SPLIT_LIST=2 \
           -x FLAGCX_P2P_DISABLE=1 \
@@ -742,7 +756,12 @@ run_suite() {
           "${pxn_platform_env[@]}" \
           "${runner_net_platform_env[@]}" \
           ./build/bin/runner_mpi_tests \
-          --gtest_filter=FlagCXCollTest.SendRecv:FlagCXCollTest.AllReduce:FlagCXCollTest.AlltoAll
+          --gtest_filter=FlagCXCollTest.SendRecv:FlagCXCollTest.AllReduce:FlagCXCollTest.AlltoAll || pxn_status=$?
+      fi
+      if ((unit_status != 0 || default_status != 0 || hybrid_status != 0 ||
+           net_status != 0 || stripe_status != 0 || pxn_status != 0)); then
+        echo "Runner failures: unit=$unit_status default=$default_status hybrid=$hybrid_status NET=$net_status striping=$stripe_status PXN=$pxn_status" >&2
+        return 1
       fi
       ;;
     symmem)
@@ -921,5 +940,10 @@ set +e
 suite_status=$?
 set -e
 if ((suite_status != 0)); then
+  if [[ "$(basename "$SET_ENV_SCRIPT" .sh)" == ascend &&
+        "$suite_status" != 130 && "$suite_status" != 143 ]]; then
+    bash "$PROJECT_ROOT/.github/scripts/ci/run_ascend_diagnostics.sh" "$SUITE" || \
+      echo "Ascend crash diagnostics did not complete; preserving suite exit=$suite_status" >&2
+  fi
   exit "$suite_status"
 fi
