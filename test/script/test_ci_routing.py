@@ -462,7 +462,7 @@ class CiCompletionGateTest(unittest.TestCase):
 
 
 class PlatformWorkflowCompletionTest(unittest.TestCase):
-    def check(self, platforms, config, cuda_base, cuda, hygon, metax, ppu):
+    def check(self, platforms, config, cuda_base, cuda, hygon, metax, ppu, ascend="skipped"):
         return subprocess.run(
             [
                 "bash",
@@ -474,6 +474,7 @@ class PlatformWorkflowCompletionTest(unittest.TestCase):
                 hygon,
                 metax,
                 ppu,
+                ascend,
             ],
             capture_output=True,
             text=True,
@@ -488,10 +489,15 @@ class PlatformWorkflowCompletionTest(unittest.TestCase):
             self.check('["hygon","ppu"]', "success", "skipped", "skipped", "success", "skipped", "success").returncode,
             0,
         )
+        self.assertEqual(
+            self.check('["ascend"]', "success", "skipped", "skipped", "skipped", "skipped", "skipped", "success").returncode,
+            0,
+        )
         for result in (
             ("[\"cuda\"]", "skipped", "success", "skipped", "skipped", "skipped", "skipped"),
             ("[\"hygon\"]", "skipped", "skipped", "skipped", "failure", "skipped", "skipped"),
             ("[\"ppu\"]", "success", "skipped", "skipped", "skipped", "skipped", "cancelled"),
+            ("[\"ascend\"]", "success", "skipped", "skipped", "skipped", "skipped", "skipped", "failure"),
         ):
             with self.subTest(result=result):
                 self.assertNotEqual(self.check(*result).returncode, 0)

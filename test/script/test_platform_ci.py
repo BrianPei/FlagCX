@@ -757,6 +757,9 @@ class PlatformCiRegressionTest(unittest.TestCase):
         hygon_handler = (
             REPO_ROOT / ".github/scripts/ci/run_hygon_workload.sh"
         ).read_text()
+        ascend_handler = (
+            REPO_ROOT / ".github/scripts/ci/run_ascend_workload.sh"
+        ).read_text()
         metax_handler = (
             REPO_ROOT / ".github/scripts/ci/run_metax_workload.sh"
         ).read_text()
@@ -770,6 +773,11 @@ class PlatformCiRegressionTest(unittest.TestCase):
         self.assertIn("unset FLAGCX_SKIP_HETERO", hygon_handler)
         self.assertIn("metax torch-api", torch_workflow)
         self.assertNotIn("export FLAGCX_USE_HETERO_COMM", metax_handler)
+        self.assertIn("ascend perf", perf_workflow)
+        self.assertIn('"$perf_runner" homogeneous "$perf_bin"', ascend_handler)
+        self.assertIn("ascend torch-api", torch_workflow)
+        self.assertIn("import torch, torch_npu", ascend_handler)
+        self.assertIn('"$PYTHON_BIN" setup.py build_ext --inplace', ascend_handler)
 
     def test_ascend_symmem_override_runs_supported_tests_without_vmm(self):
         result = subprocess.run(
@@ -807,7 +815,7 @@ class PlatformCiRegressionTest(unittest.TestCase):
         ):
             self.assertNotIn("container:", workflow)
             self.assertNotIn("image: harbor.baai.ac.cn", workflow)
-            for platform in ("cuda", "metax", "hygon", "ppu"):
+            for platform in ("cuda", "metax", "hygon", "ppu", "ascend"):
                 with self.subTest(workload=workload, platform=platform):
                     self.assertIn(
                         f"ruby .github/scripts/ci/load_platform_config.rb {platform}",

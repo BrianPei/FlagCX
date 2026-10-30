@@ -4,6 +4,7 @@ display_name: Ascend 910C unit tests
 paths_watch:
   - .github/configs/ascend.yml
   - .github/scripts/set_env/ascend.sh
+  - .github/scripts/ci/run_ascend_workload.sh
   - .github/workflows/unit_tests_common.yml
   - Dockerfile.ascend-ci
   - flagcx/adaptor/device/cann_adaptor.cc
@@ -14,7 +15,7 @@ paths_watch:
   - test/unittest/adaptor/net_test_utils.h
   - test/unittest/topo/**
   - flagcx/core/p2p_topo.cc
-ci_image: harbor.baai.ac.cn/flagos-dev/flagcx:ascend-dev-fixed-20261028
+ci_image: harbor.baai.ac.cn/flagos-dev/flagcx:ascend-dev-fixed-20261028-debug
 runner_labels:
   - flagcicd-910c
 docker_volumes:
